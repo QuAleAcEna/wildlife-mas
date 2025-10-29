@@ -1,0 +1,17 @@
+
+services:
+  prosody:
+    image: prosody/prosody:latest
+    container_name: prosody
+    restart: unless-stopped
+    ports: ["5222:5222", "5280:5280"]
+    environment:
+      - LOCAL=localhost
+      - HTTPS=0
+    volumes:
+      - prosody-data:/var/lib/prosody
+      - ./prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
+
+volumes:
+  prosody-data:
+  
