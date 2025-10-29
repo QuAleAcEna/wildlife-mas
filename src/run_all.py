@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from agents.drone_agent import DroneAgent
 from agents.sensor_agent import SensorAgent
+from agents.ranger_agent import RangerAgent
 from core.env import Reserve
 
 load_dotenv()
@@ -16,6 +17,7 @@ SENSOR_PASS = os.getenv("SENSOR_PASS")
 DRONE_JID = os.getenv("DRONE_JID")
 DRONE_PASS = os.getenv("DRONE_PASS")
 RANGER_JID = os.getenv("RANGER_JID")
+RANGER_PASS = os.getenv("RANGER_PASS")
 
 
 def _require_env_vars() -> None:
@@ -27,6 +29,7 @@ def _require_env_vars() -> None:
             "DRONE_JID": DRONE_JID,
             "DRONE_PASS": DRONE_PASS,
             "RANGER_JID": RANGER_JID,
+            "RANGER_PASS": RANGER_PASS,
         }.items()
         if not value
     ]
@@ -41,9 +44,11 @@ async def main(args: Any = None) -> None:
     reserve = Reserve()
     drone = DroneAgent(DRONE_JID, DRONE_PASS, ranger_jid=RANGER_JID)
     sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
+    ranger = RangerAgent(RANGER_JID, RANGER_PASS)
 
     await drone.start(auto_register=True)
     await sensor.start(auto_register=True)
+    await ranger.start(auto_register=True)
 
     print("Agents running. Press Ctrl+C to stop.")
     try:
@@ -54,7 +59,7 @@ async def main(args: Any = None) -> None:
     finally:
         await sensor.stop()
         await drone.stop()
-
+        await ranger.stop()
 
 if __name__ == "__main__":
     spade.run(main())
