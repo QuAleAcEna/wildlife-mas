@@ -16,4 +16,5 @@ async def main(args=None):
     await a.stop()
 
 if __name__ == "__main__":
-    spade.run(main())  # start local XMPP for this run
+    # Use SPADE's embedded XMPP server to avoid external authentication requirements.
+    spade.run(main(), embedded_xmpp_server=True)  # start local XMPP for this run

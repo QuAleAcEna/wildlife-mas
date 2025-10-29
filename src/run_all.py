@@ -62,4 +62,5 @@ async def main(args: Any = None) -> None:
         await ranger.stop()
 
 if __name__ == "__main__":
-    spade.run(main())
+    # Run against SPADE's embedded XMPP server to skip external authentication.
+    spade.run(main(), embedded_xmpp_server=True)
