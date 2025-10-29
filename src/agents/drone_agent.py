@@ -44,13 +44,17 @@ class DroneAgent(Agent):
     async def setup(self) -> None:
         self.add_behaviour(self.AlertRelayBehaviour(self))
 
-    async def handle_sensor_alert(self, msg: Message) -> None:
+    async def handle_sensor_alert(
+        self, behaviour: "DroneAgent.AlertRelayBehaviour", msg: Message
+    ) -> None:
         sensor = str(msg.sender)
         payload = self._safe_load(msg.body)
         ack_payload = self._build_ack_payload(sensor, payload)
         attachments = await self._collect_attachments(payload)
-        await self._reply_to_sensor(sensor, ack_payload)
-        await self._notify_ranger(sensor, payload, ack_payload, attachments)
+        await self._reply_to_sensor(behaviour, sensor, ack_payload)
+        await self._notify_ranger(
+            behaviour, sensor, payload, ack_payload, attachments
+        )
 
     def _safe_load(self, body: Optional[str]) -> Dict[str, Any]:
         if not body:
@@ -87,15 +91,21 @@ class DroneAgent(Agent):
             "ir_base64": base64.b64encode(ir_bytes).decode("ascii"),
         }
 
-    async def _reply_to_sensor(self, sensor: str, ack_payload: Dict[str, Any]) -> None:
+    async def _reply_to_sensor(
+        self,
+        behaviour: "DroneAgent.AlertRelayBehaviour",
+        sensor: str,
+        ack_payload: Dict[str, Any],
+    ) -> None:
         reply = Message(to=sensor)
         reply.set_metadata("performative", INFORM)
         reply.set_metadata("type", TELEMETRY)
         reply.body = json_dumps(ack_payload)
-        await self.send(reply)
+        await behaviour.send(reply)
 
     async def _notify_ranger(
         self,
+        behaviour: "DroneAgent.AlertRelayBehaviour",
         sensor: str,
         original_payload: Dict[str, Any],
         ack_payload: Dict[str, Any],
@@ -109,7 +119,7 @@ class DroneAgent(Agent):
             "attachments": attachments,
         }
         msg = make_inform_alert(self.ranger_jid, ranger_payload)
-        await self.send(msg)
+        await behaviour.send(msg)
 
     class AlertRelayBehaviour(CyclicBehaviour):
         def __init__(self, drone: "DroneAgent") -> None:
@@ -120,4 +130,4 @@ class DroneAgent(Agent):
             msg = await self.receive(timeout=0.1)
             if not msg:
                 return
-            await self.drone.handle_sensor_alert(msg)
+            await self.drone.handle_sensor_alert(self, msg)

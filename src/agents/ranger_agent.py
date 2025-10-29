@@ -22,7 +22,9 @@ class RangerAgent(Agent):
         self.log("Ranger ready for alerts…")
         self.add_behaviour(self.AlertReceptionBehaviour(self))
 
-    async def handle_drone_notification(self, msg: Message) -> None:
+    async def handle_drone_notification(
+        self, behaviour: "RangerAgent.AlertReceptionBehaviour", msg: Message
+    ) -> None:
         payload = self._safe_load(msg.body)
         if not payload:
             self.log("Received empty notification from", msg.sender)
@@ -36,7 +38,7 @@ class RangerAgent(Agent):
             payload.get("sensor"),
         )
 
-        await self._confirm_dispatch(str(msg.sender), payload)
+        await self._confirm_dispatch(behaviour, str(msg.sender), payload)
 
     def _safe_load(self, body: str | None) -> Dict[str, Any]:
         if not body:
@@ -46,7 +48,12 @@ class RangerAgent(Agent):
         except Exception:
             return {"raw_body": body}
 
-    async def _confirm_dispatch(self, drone: str, payload: Dict[str, Any]) -> None:
+    async def _confirm_dispatch(
+        self,
+        behaviour: "RangerAgent.AlertReceptionBehaviour",
+        drone: str,
+        payload: Dict[str, Any],
+    ) -> None:
         response = {
             "ranger": str(self.jid),
             "alert_id": payload.get("alert", {}).get("id"),
@@ -59,7 +66,7 @@ class RangerAgent(Agent):
         msg.set_metadata("performative", INFORM)
         msg.set_metadata("type", TELEMETRY)
         msg.body = json_dumps(response)
-        await self.send(msg)
+        await behaviour.send(msg)
 
     def log(self, *args: Any) -> None:
         print("[RANGER]", *args)
@@ -73,4 +80,4 @@ class RangerAgent(Agent):
             msg = await self.receive(timeout=0.5)
             if not msg:
                 return
-            await self.ranger.handle_drone_notification(msg)
+            await self.ranger.handle_drone_notification(self, msg)
