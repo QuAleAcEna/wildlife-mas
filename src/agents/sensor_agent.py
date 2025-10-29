@@ -1,5 +1,6 @@
 import random
 import time
+import uuid
 
 from spade import agent
 from spade.behaviour import PeriodicBehaviour
@@ -19,8 +20,10 @@ class SensorAgent(agent.Agent):
             # Simulate sensing with low probability for anomaly
             if random.random() < 0.15:  # ~15% tick anomaly
                 cell = self.agent.reserve.random_cell()
+                alert_id = f"{self.agent.jid}-{uuid.uuid4().hex}"
                 payload = {
                     "sensor": str(self.agent.jid),
+                    "id": alert_id,
                     "pos": cell,
                     "confidence": round(random.uniform(0.6, 0.95), 2),
                     "ts": self.current_time(),

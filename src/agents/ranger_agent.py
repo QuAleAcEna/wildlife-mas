@@ -7,7 +7,7 @@ from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour
 from spade.message import Message
 
-from core.messages import INFORM, TELEMETRY, json_dumps, json_loads
+from core.messages import ALERT_ANOMALY, INFORM, TELEMETRY, json_dumps, json_loads
 
 
 class RangerAgent(Agent):
@@ -79,5 +79,7 @@ class RangerAgent(Agent):
         async def run(self) -> None:
             msg = await self.receive(timeout=0.5)
             if not msg:
+                return
+            if msg.get_metadata("type") != ALERT_ANOMALY:
                 return
             await self.ranger.handle_drone_notification(self, msg)

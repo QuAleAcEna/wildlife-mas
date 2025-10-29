@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from typing import Any
 
@@ -61,6 +62,70 @@ async def main(args: Any = None) -> None:
         await drone.stop()
         await ranger.stop()
 
-if __name__ == "__main__":
+
     # Run against SPADE's embedded XMPP server to skip external authentication.
+def _patch_pyjabber_handle_user() -> None:
+    """Patch pyjabber admin endpoint for SQLAlchemy 2.x compatibility."""
+    try:
+        from sqlalchemy import text
+
+        from pyjabber.webpage.api import api as api_module
+    except Exception:
+        return
+
+    if getattr(api_module.handleUser, "__patched__", False):
+        return
+
+    DB = api_module.DB  # reuse module singletons
+    web = api_module.web
+
+    async def handle_user(request):  # pragma: no cover - runtime side effect
+        with DB.connection() as con:
+            result = con.execute(text("SELECT id, jid FROM credentials"))
+            rows = result.fetchall()
+        users = [{"id": row[0], "jid": row[1]} for row in rows]
+        return web.Response(text=json.dumps(users))
+
+    handle_user.__patched__ = True  # type: ignore[attr-defined]
+    api_module.handleUser = handle_user
+
+
+
+def _patch_pyjabber_xml_protocol() -> None:
+    """Mute noisy SAXParseException logs caused by non-XMPP probes."""
+    try:
+        from loguru import logger
+        from xml import sax
+
+        from pyjabber.network import XMLProtocol as xml_protocol_module
+    except Exception:
+        return
+
+    if getattr(xml_protocol_module.XMLProtocol.data_received, "__patched__", False):
+        return
+
+    original = xml_protocol_module.XMLProtocol.data_received
+
+    def data_received(self, data):  # pragma: no cover - runtime side effect
+        try:
+            return original(self, data)
+        except sax.SAXParseException as exc:
+            peer = getattr(self, "_peer", "unknown")
+            logger.warning("Dropped non-XMPP payload from {}: {}", peer, exc)
+            transport = getattr(self, "_transport", None)
+            if transport:
+                try:
+                    transport.close()
+                except Exception:
+                    pass
+
+    data_received.__patched__ = True  # type: ignore[attr-defined]
+    xml_protocol_module.XMLProtocol.data_received = data_received
+
+
+
+if __name__ == "__main__":
+    _patch_pyjabber_handle_user()
+    _patch_pyjabber_xml_protocol()
+
     spade.run(main(), embedded_xmpp_server=True)

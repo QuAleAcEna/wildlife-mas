@@ -11,6 +11,7 @@ from spade.behaviour import CyclicBehaviour
 from spade.message import Message
 
 from core.messages import (
+    ALERT_ANOMALY,
     INFORM,
     TELEMETRY,
     json_dumps,
@@ -47,6 +48,8 @@ class DroneAgent(Agent):
     async def handle_sensor_alert(
         self, behaviour: "DroneAgent.AlertRelayBehaviour", msg: Message
     ) -> None:
+        if msg.get_metadata("type") != ALERT_ANOMALY:
+            return
         sensor = str(msg.sender)
         payload = self._safe_load(msg.body)
         ack_payload = self._build_ack_payload(sensor, payload)
