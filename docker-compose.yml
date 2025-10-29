@@ -11,7 +11,7 @@ services:
     volumes:
       - prosody-data:/var/lib/prosody
       - ./prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
-
+      - ./init_users.sh:/docker-entrypoint.d/10-init-users.sh:ro
 volumes:
   prosody-data:
   
