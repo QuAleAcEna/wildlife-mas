@@ -4,10 +4,10 @@ import asyncio
 import base64
 import datetime as dt
 import secrets
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from spade.agent import Agent
-from spade.behaviour import CyclicBehaviour
+from spade.behaviour import CyclicBehaviour, PeriodicBehaviour
 from spade.message import Message
 
 from core.messages import (
@@ -18,6 +18,7 @@ from core.messages import (
     json_loads,
     make_inform_alert,
 )
+from core.env import Reserve
 
 _DEFAULT_SAMPLE_SIZE = 512
 
@@ -35,15 +36,25 @@ class DroneAgent(Agent):
         cruise_speed_mps: float = 22.0,
         photo_sampler: Optional[Callable[[Dict[str, Any]], bytes]] = None,
         ir_sampler: Optional[Callable[[Dict[str, Any]], bytes]] = None,
+        reserve: Optional[Reserve] = None,
+        patrol_period_s: float = 5.0,
     ):
         super().__init__(jid, password)
         self.ranger_jid = ranger_jid
         self.cruise_speed_mps = cruise_speed_mps
         self.photo_sampler = photo_sampler or _default_sampler
         self.ir_sampler = ir_sampler or _default_sampler
+        self.reserve = reserve or Reserve()
+        self.patrol_period_s = patrol_period_s
+        self._patrol_route: List[Tuple[int, int]] = self._build_patrol_route()
+        self._route_index: int = -1
+        self.position: Tuple[int, int] = self._next_waypoint()
 
     async def setup(self) -> None:
         self.add_behaviour(self.AlertRelayBehaviour(self))
+        self.add_behaviour(
+            self.PatrolBehaviour(self, period=self.patrol_period_s)
+        )
 
     async def handle_sensor_alert(
         self, behaviour: "DroneAgent.AlertRelayBehaviour", msg: Message
@@ -82,6 +93,46 @@ class DroneAgent(Agent):
         if self.cruise_speed_mps <= 0:
             return 0.0
         return max(0.0, distance_m / self.cruise_speed_mps)
+
+    def _build_patrol_route(self) -> List[Tuple[int, int]]:
+        width = max(1, self.reserve.width)
+        height = max(1, self.reserve.height)
+        route: List[Tuple[int, int]] = []
+        for y in range(height):
+            xs = range(width) if y % 2 == 0 else range(width - 1, -1, -1)
+            for x in xs:
+                cell = (x, y)
+                if self.reserve.is_no_fly(cell):
+                    continue
+                route.append(cell)
+        if not route:
+            route = [(0, 0)]
+        return route
+
+    def _next_waypoint(self) -> Tuple[int, int]:
+        if not self._patrol_route:
+            return (0, 0)
+        self._route_index = (self._route_index + 1) % len(self._patrol_route)
+        return self._patrol_route[self._route_index]
+
+    async def _broadcast_patrol_status(
+        self, behaviour: "DroneAgent.PatrolBehaviour"
+    ) -> None:
+        payload = {
+            "drone": str(self.jid),
+            "position": {"x": self.position[0], "y": self.position[1]},
+            "route_index": self._route_index,
+            "route_length": len(self._patrol_route),
+            "timestamp": dt.datetime.utcnow().isoformat() + "Z",
+        }
+        msg = Message(to=self.ranger_jid)
+        msg.set_metadata("performative", INFORM)
+        msg.set_metadata("type", TELEMETRY)
+        msg.body = json_dumps(payload)
+        await behaviour.send(msg)
+
+    def log(self, *args: Any) -> None:
+        print("[DRONE]", *args)
 
     async def _collect_attachments(self, payload: Dict[str, Any]) -> Dict[str, str]:
         photo_task = asyncio.create_task(
@@ -133,4 +184,22 @@ class DroneAgent(Agent):
             msg = await self.receive(timeout=0.1)
             if not msg:
                 return
+            if msg.get_metadata("type") != ALERT_ANOMALY:
+                self.drone.log(
+                    "Ignoring non-alert message from", str(msg.sender)
+                )
+                return
             await self.drone.handle_sensor_alert(self, msg)
+    class PatrolBehaviour(PeriodicBehaviour):
+        def __init__(self, drone: "DroneAgent", period: float) -> None:
+            super().__init__(period=period)
+            self.drone = drone
+
+        async def run(self) -> None:
+            self.drone.position = self.drone._next_waypoint()
+            self.drone.log(
+                "Patrolling waypoint",
+                self.drone.position,
+                f"[{self.drone._route_index + 1}/{len(self.drone._patrol_route)}]",
+            )
+            await self.drone._broadcast_patrol_status(self)

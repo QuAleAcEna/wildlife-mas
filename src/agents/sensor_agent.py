@@ -15,7 +15,7 @@ class SensorAgent(agent.Agent):
         self.reserve = reserve
         self.target_drone = target_drone
 
-    class SenseAndAlert(PeriodicBehaviour):
+    class SenseAndAlert(PeriodicBehaviour): #alertas periodicos random, mudar depois para baseados em eventos
         async def run(self):
             # Simulate sensing with low probability for anomaly
             if random.random() < 0.15:  # ~15% tick anomaly
