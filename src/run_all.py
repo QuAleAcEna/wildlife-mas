@@ -43,13 +43,13 @@ async def main(args: Any = None) -> None:
     _require_env_vars()
 
     reserve = Reserve()
+    ranger = RangerAgent(RANGER_JID, RANGER_PASS)
     drone = DroneAgent(DRONE_JID, DRONE_PASS, ranger_jid=RANGER_JID)
     sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
-    ranger = RangerAgent(RANGER_JID, RANGER_PASS)
 
+    await ranger.start(auto_register=True)
     await drone.start(auto_register=True)
     await sensor.start(auto_register=True)
-    await ranger.start(auto_register=True)
 
     print("Agents running. Press Ctrl+C to stop.")
     try:
