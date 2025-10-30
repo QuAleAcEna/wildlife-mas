@@ -4,7 +4,8 @@ import asyncio
 import base64
 import datetime as dt
 import secrets
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections import deque
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, PeriodicBehaviour
@@ -97,17 +98,89 @@ class DroneAgent(Agent):
     def _build_patrol_route(self) -> List[Tuple[int, int]]:
         width = max(1, self.reserve.width)
         height = max(1, self.reserve.height)
-        route: List[Tuple[int, int]] = []
-        for y in range(height):
-            xs = range(width) if y % 2 == 0 else range(width - 1, -1, -1)
-            for x in xs:
-                cell = (x, y)
-                if self.reserve.is_no_fly(cell):
-                    continue
-                route.append(cell)
-        if not route:
-            route = [(0, 0)]
+        free_cells: Set[Tuple[int, int]] = {
+            (x, y)
+            for y in range(height)
+            for x in range(width)
+            if not self.reserve.is_no_fly((x, y))
+        }
+        if not free_cells:
+            return [(0, 0)]
+
+        ordered_targets = sorted(free_cells, key=lambda cell: (cell[1], cell[0]))
+        start = ordered_targets[0]
+        reachable = self._reachable_cells(start, free_cells)
+        ordered_targets = [cell for cell in ordered_targets if cell in reachable]
+        route: List[Tuple[int, int]] = [start]
+        visited: Set[Tuple[int, int]] = {start}
+        current = start
+
+        for target in ordered_targets[1:]:
+            if target in visited:
+                continue
+            path = self._shortest_path(current, target, reachable)
+            if not path:
+                continue
+            for step in path[1:]:
+                route.append(step)
+                visited.add(step)
+            current = path[-1]
+
         return route
+
+    def _shortest_path(
+        self,
+        start: Tuple[int, int],
+        goal: Tuple[int, int],
+        walkable: Set[Tuple[int, int]],
+    ) -> Optional[List[Tuple[int, int]]]:
+        if start == goal:
+            return [start]
+
+        queue = deque([(start, [start])])
+        seen = {start}
+        while queue:
+            cell, path = queue.popleft()
+            for neighbor in self._neighbors(cell):
+                if neighbor in seen or neighbor not in walkable:
+                    continue
+                if neighbor == goal:
+                    return path + [neighbor]
+                seen.add(neighbor)
+                queue.append((neighbor, path + [neighbor]))
+        return None
+
+    def _reachable_cells(
+        self,
+        start: Tuple[int, int],
+        free_cells: Set[Tuple[int, int]],
+    ) -> Set[Tuple[int, int]]:
+        queue = deque([start])
+        reachable = {start}
+        while queue:
+            cell = queue.popleft()
+            for neighbor in self._neighbors(cell):
+                if neighbor in reachable or neighbor not in free_cells:
+                    continue
+                reachable.add(neighbor)
+                queue.append(neighbor)
+        return reachable
+
+    def _neighbors(self, cell: Tuple[int, int]) -> List[Tuple[int, int]]:
+        x, y = cell
+        candidates = [
+            (x + 1, y),
+            (x - 1, y),
+            (x, y + 1),
+            (x, y - 1),
+        ]
+        neighbors: List[Tuple[int, int]] = []
+        for nx, ny in candidates:
+            if 0 <= nx < max(1, self.reserve.width) and 0 <= ny < max(
+                1, self.reserve.height
+            ):
+                neighbors.append((nx, ny))
+        return neighbors
 
     def _next_waypoint(self) -> Tuple[int, int]:
         if not self._patrol_route:

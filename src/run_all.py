@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from typing import Any
 
@@ -42,9 +43,16 @@ def _require_env_vars() -> None:
 async def main(args: Any = None) -> None:
     _require_env_vars()
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     reserve = Reserve()
+    print("Reserve no-fly cells:", sorted(reserve.no_fly))
+    reserve.clock.start()
     ranger = RangerAgent(RANGER_JID, RANGER_PASS)
-    drone = DroneAgent(DRONE_JID, DRONE_PASS, ranger_jid=RANGER_JID)
+    drone = DroneAgent(DRONE_JID, DRONE_PASS, ranger_jid=RANGER_JID, reserve=reserve)
     sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
 
     await ranger.start(auto_register=True)
@@ -58,6 +66,7 @@ async def main(args: Any = None) -> None:
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
+        await reserve.clock.stop()
         await sensor.stop()
         await drone.stop()
         await ranger.stop()
