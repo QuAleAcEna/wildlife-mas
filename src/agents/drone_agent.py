@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime as dt
+import random
 import secrets
 from collections import deque
 from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
@@ -43,6 +44,7 @@ class DroneAgent(Agent):
         battery_consumption_per_step: float = 1.0,
         charge_rate_per_tick: float = 20.0,
         base_position: Tuple[int, int] = (0, 0),
+        patrol_waypoint_count: int = 10,
     ):
         super().__init__(jid, password)
         self.ranger_jid = ranger_jid
@@ -52,6 +54,7 @@ class DroneAgent(Agent):
         self.reserve = reserve or Reserve()
         self.patrol_period_s = patrol_period_s
         self.base_position = base_position
+        self.patrol_waypoint_count = max(0, patrol_waypoint_count)
         self.max_battery = max(0.0, battery_capacity)
         self.battery_consumption_per_step = max(0.0, battery_consumption_per_step)
         self.charge_rate_per_tick = max(0.0, charge_rate_per_tick)
@@ -136,30 +139,37 @@ class DroneAgent(Agent):
             self.base_position if self.base_position in free_cells else ordered_targets[0]
         )
         reachable = self._reachable_cells(start_candidate, free_cells)
+        if not reachable:
+            reachable = {start_candidate}
         if self.base_position in reachable:
             start = self.base_position
         else:
-            start = next(
-                (cell for cell in ordered_targets if cell in reachable), start_candidate
-            )
+            start = next((cell for cell in ordered_targets if cell in reachable), start_candidate)
+
         self._walkable_cells = set(reachable)
-        ordered_targets = [cell for cell in ordered_targets if cell in reachable]
+
         route: List[Tuple[int, int]] = [start]
-        visited: Set[Tuple[int, int]] = {start}
         current = start
 
-        for target in ordered_targets[1:]:
-            if target in visited:
-                continue
-            path = self._shortest_path(current, target, reachable)
-            if not path:
-                continue
-            for step in path[1:]:
-                route.append(step)
-                visited.add(step)
-            current = path[-1]
+        available_targets = [cell for cell in self._walkable_cells if cell != start]
+        if available_targets and self.patrol_waypoint_count > 0:
+            waypoint_count = min(len(available_targets), self.patrol_waypoint_count)
+            random_targets = random.sample(available_targets, waypoint_count)
+            for target in random_targets:
+                path = self._shortest_path(current, target, self._walkable_cells)
+                if not path:
+                    continue
+                for step in path[1:]:
+                    route.append(step)
+                current = target
 
-        return route
+        if current != start:
+            back_path = self._shortest_path(current, start, self._walkable_cells)
+            if back_path:
+                for step in back_path[1:]:
+                    route.append(step)
+
+        return route or [start]
 
     def _shortest_path(
         self,
