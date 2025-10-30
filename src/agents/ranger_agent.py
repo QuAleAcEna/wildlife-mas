@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour
@@ -27,6 +27,8 @@ class RangerAgent(Agent):
         self.alert_history: List[Dict[str, Any]] = []
         self.telemetry_history: List[Dict[str, Any]] = []
         self.clock = clock
+        self._base_position: Tuple[int, int] = (0, 0)
+        self._current_position: Tuple[int, int] = self._base_position
 
     async def setup(self) -> None:
         self.log("Ranger ready for alerts…")
@@ -68,6 +70,21 @@ class RangerAgent(Agent):
             "from",
             payload.get("sensor"),
         )
+        path = self._plan_path_to_alert(payload)
+        if path:
+            route_str = " -> ".join(f"({x},{y})" for x, y in path)
+            self.log(
+                "Ranger route",
+                route_str,
+            )
+            self.log(
+                "Ranger arrived at alert",
+                payload.get("alert", {}).get("id"),
+                "after",
+                len(path) - 1,
+                "steps.",
+            )
+            self._update_field_position(path[-1])
 
         await self._confirm_dispatch(behaviour, str(msg.sender), payload)
 
@@ -131,6 +148,38 @@ class RangerAgent(Agent):
         if hour >= 19 or hour <= 3:
             return True
         return False
+
+    def _plan_path_to_alert(self, payload: Dict[str, Any]) -> List[Tuple[int, int]]:
+        alert_pos = payload.get("alert", {}).get("pos")
+        if not isinstance(alert_pos, (list, tuple)) or len(alert_pos) != 2:
+            self.log(
+                "Cannot plan path: invalid alert position",
+                alert_pos,
+            )
+            return []
+        try:
+            target = (int(alert_pos[0]), int(alert_pos[1]))
+        except (TypeError, ValueError):
+            self.log("Cannot plan path: non-numeric alert position", alert_pos)
+            return []
+
+        start = self._current_position
+        path: List[Tuple[int, int]] = [start]
+        current_x, current_y = start
+
+        step = 1 if target[0] >= current_x else -1
+        for x in range(current_x + step, target[0] + step, step):
+            path.append((x, current_y))
+        current_x = target[0]
+
+        step = 1 if target[1] >= current_y else -1
+        for y in range(current_y + step, target[1] + step, step):
+            path.append((current_x, y))
+
+        return path
+
+    def _update_field_position(self, new_position: Tuple[int, int]) -> None:
+        self._current_position = new_position
 
     class AlertReceptionBehaviour(CyclicBehaviour):
         def __init__(self, ranger: "RangerAgent") -> None:

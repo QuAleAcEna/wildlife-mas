@@ -18,7 +18,7 @@ class SensorAgent(agent.Agent):
     class SenseAndAlert(PeriodicBehaviour): #alertas periodicos random, mudar depois para baseados em eventos
         async def run(self):
             # Simulate sensing with low probability for anomaly
-            if random.random() < 0.15:  # ~15% tick anomaly
+            if random.random() < 0.5:  # ~50% tick anomaly for quicker testing
                 cell = self.agent.reserve.random_cell()
                 alert_id = f"{self.agent.jid}-{uuid.uuid4().hex}"
                 payload = {
@@ -37,7 +37,7 @@ class SensorAgent(agent.Agent):
 
     async def setup(self):
         self.log("Sensor starting…")
-        behaviour = self.SenseAndAlert(period=2.0)  # every 2s
+        behaviour = self.SenseAndAlert(period=1.0)  # every 1s for faster alert cadence
         self.add_behaviour(behaviour)
 
     def log(self, *args):
