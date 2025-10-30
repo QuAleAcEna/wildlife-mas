@@ -18,12 +18,12 @@ class SensorAgent(agent.Agent):
         self.reserve = reserve
         self.target_drone = target_drone
 
-    class SenseAndAlert(PeriodicBehaviour):
+    class SenseAndAlert(PeriodicBehaviour): #sending alerts at random times, change to be based on movement, sound, etc
         """Periodic behaviour that probabilistically emits anomaly alerts."""
 
         async def run(self):
             """Fire alerts at random to drive the demonstration flow."""
-            if random.random() < 0.5:  # Elevated odds to keep the demo busy.
+            if random.random() < 0.15:  # Elevated odds to keep the demo busy.
                 cell = self.agent.reserve.random_cell()
                 alert_id = f"{self.agent.jid}-{uuid.uuid4().hex}"
                 payload = {

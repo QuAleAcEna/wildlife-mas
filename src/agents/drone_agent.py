@@ -281,6 +281,30 @@ class DroneAgent(Agent):
         msg.body = json_dumps(payload)
         await behaviour.send(msg)
 
+    async def _maybe_emit_patrol_alert(
+        self, behaviour: "DroneAgent.PatrolBehaviour"
+    ) -> None: # send patrol alert with 10% probability at random times, change to be based on pochers or other factors
+        """Allow the drone to raise opportunistic alerts while patrolling."""
+        if random.random() >= 0.5:
+            return
+        alert_id = f"{self.jid}-patrol-{secrets.token_hex(4)}"
+        alert_payload = {
+            "sensor": str(self.jid),
+            "id": alert_id,
+            "pos": (self.position[0], self.position[1]),
+            "confidence": round(random.uniform(0.55, 0.9), 2),
+            "ts": dt.datetime.utcnow().isoformat() + "Z",
+        }
+        ranger_payload = {
+            "sensor": str(self.jid),
+            "drone": str(self.jid),
+            "alert": alert_payload,
+            "ack": {"alert_id": alert_id, "source": "drone_patrol"},
+        }
+        msg = make_inform_alert(self.ranger_jid, ranger_payload)
+        await behaviour.send(msg)
+        self.log("Self-reported patrol alert", alert_id, "at", alert_payload["pos"])
+
     def log(self, *args: Any) -> None:
         """Prefix drone log messages for easier tracing in shared consoles."""
         print("[DRONE]", *args)
@@ -444,6 +468,7 @@ class DroneAgent(Agent):
                 self.position,
                 f"[{self._route_index + 1}/{len(self._patrol_route)}]",
             )
+            await self._maybe_emit_patrol_alert(behaviour)
 
         await self._broadcast_patrol_status(behaviour)
 
