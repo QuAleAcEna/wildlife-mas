@@ -66,6 +66,7 @@ class DroneAgent(Agent):
         self._next_battery_log_pct: Optional[float] = (
             90.0 if self.max_battery > 0 else None
         )
+        self._planned_patrol_targets: List[Tuple[int, int]] = []
         self._patrol_route: List[Tuple[int, int]] = self._build_patrol_route()
         self._route_index: int = -1
         self.position: Tuple[int, int] = (
@@ -150,6 +151,7 @@ class DroneAgent(Agent):
 
         route: List[Tuple[int, int]] = [start]
         current = start
+        planned_targets: List[Tuple[int, int]] = []
 
         available_targets = [cell for cell in self._walkable_cells if cell != start]
         if available_targets and self.patrol_waypoint_count > 0:
@@ -162,6 +164,7 @@ class DroneAgent(Agent):
                 for step in path[1:]:
                     route.append(step)
                 current = target
+                planned_targets.append(target)
 
         if current != start:
             back_path = self._shortest_path(current, start, self._walkable_cells)
@@ -169,6 +172,7 @@ class DroneAgent(Agent):
                 for step in back_path[1:]:
                     route.append(step)
 
+        self._planned_patrol_targets = planned_targets
         return route or [start]
 
     def _shortest_path(
@@ -394,6 +398,15 @@ class DroneAgent(Agent):
             self._advance_return_path(previous_position)
         else:
             next_position = self._next_waypoint()
+            if (
+                previous_position == self.base_position
+                and next_position != self.base_position
+                and self._planned_patrol_targets
+            ):
+                targets_str = ", ".join(
+                    f"({x},{y})" for x, y in self._planned_patrol_targets
+                )
+                self.log("Departing base to cover:", targets_str)
             self.position = next_position
             self._consume_battery_for_move(previous_position, next_position)
             self.log(
