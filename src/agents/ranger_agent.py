@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour
@@ -9,16 +9,24 @@ from spade.message import Message
 from spade.template import Template
 
 from core.messages import ALERT_ANOMALY, INFORM, TELEMETRY, json_dumps, json_loads
+from core.env import EnvironmentClock
 
 
 class RangerAgent(Agent):
     """Ranger command agent that receives alerts and issues responses."""
 
-    def __init__(self, jid: str, password: str, dispatch_delay_s: float = 12.0):
+    def __init__(
+        self,
+        jid: str,
+        password: str,
+        dispatch_delay_s: float = 12.0,
+        clock: Optional[EnvironmentClock] = None,
+    ):
         super().__init__(jid, password)
         self.dispatch_delay_s = dispatch_delay_s
         self.alert_history: List[Dict[str, Any]] = []
         self.telemetry_history: List[Dict[str, Any]] = []
+        self.clock = clock
 
     async def setup(self) -> None:
         self.log("Ranger ready for alerts…")
@@ -43,6 +51,17 @@ class RangerAgent(Agent):
             return
 
         self.alert_history.append(payload)
+
+        if not self._within_operating_hours():
+            current_hour = self._current_hour()
+            self.log(
+                "Outside operating hours (hour",
+                current_hour,
+                "). Deferring response to alert",
+                payload.get("alert", {}).get("id"),
+            )
+            return
+
         self.log(
             "Dispatching to alert",
             payload.get("alert", {}).get("id"),
@@ -99,6 +118,19 @@ class RangerAgent(Agent):
 
     def log(self, *args: Any) -> None:
         print("[RANGER]", *args)
+
+    def _current_hour(self) -> int:
+        if self.clock:
+            return self.clock.current_hour % 24
+        return dt.datetime.utcnow().hour
+
+    def _within_operating_hours(self) -> bool:
+        hour = self._current_hour()
+        if 9 <= hour < 17:
+            return True
+        if hour >= 19 or hour <= 3:
+            return True
+        return False
 
     class AlertReceptionBehaviour(CyclicBehaviour):
         def __init__(self, ranger: "RangerAgent") -> None:

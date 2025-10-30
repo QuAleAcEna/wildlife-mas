@@ -117,7 +117,7 @@ class DroneAgent(Agent):
             return 0.0
         return max(0.0, distance_m / self.cruise_speed_mps)
 
-    def _build_patrol_route(self) -> List[Tuple[int, int]]:
+    def _build_patrol_route(self) -> List[Tuple[int, int]]: # gerar rota de patrulha, evitando zonas proibidas , aleatoriamente (mudar depois para baseados em eventos)
         width = max(1, self.reserve.width)
         height = max(1, self.reserve.height)
         free_cells: Set[Tuple[int, int]] = {

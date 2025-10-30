@@ -51,7 +51,7 @@ async def main(args: Any = None) -> None:
     reserve = Reserve()
     print("Reserve no-fly cells:", sorted(reserve.no_fly))
     reserve.clock.start()
-    ranger = RangerAgent(RANGER_JID, RANGER_PASS)
+    ranger = RangerAgent(RANGER_JID, RANGER_PASS, clock=reserve.clock)
     drone = DroneAgent(DRONE_JID, DRONE_PASS, ranger_jid=RANGER_JID, reserve=reserve)
     sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
 
