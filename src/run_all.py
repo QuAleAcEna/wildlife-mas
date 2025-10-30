@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from agents.drone_agent import DroneAgent
 from agents.sensor_agent import SensorAgent
 from agents.ranger_agent import RangerAgent
-from core.env import Reserve
+from core.env import EnvironmentClock, Reserve
 
 load_dotenv()
 
@@ -69,7 +69,7 @@ async def main(args: Any = None) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    reserve = Reserve()
+    reserve = Reserve(clock=EnvironmentClock(seconds_per_hour=10.0))
     print("Reserve no-fly cells:", sorted(reserve.no_fly))
     # Start the shared simulation clock before agents query it.
     reserve.clock.start()
