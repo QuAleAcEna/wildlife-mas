@@ -29,6 +29,10 @@ class RangerAgent(Agent):
         self.clock = clock
         self._base_position: Tuple[int, int] = (0, 0)
         self._current_position: Tuple[int, int] = self._base_position
+        self.max_fuel: float = 200.0
+        self.fuel_per_step: float = 1.0
+        self.fuel_level: float = self.max_fuel
+        self._fuel_return_margin_steps: int = 5
 
     async def setup(self) -> None:
         self.log("Ranger ready for alerts…")
@@ -85,8 +89,15 @@ class RangerAgent(Agent):
                 "steps.",
             )
             self._update_field_position(path[-1])
-
-        await self._confirm_dispatch(behaviour, str(msg.sender), payload)
+            self._consume_fuel(len(path) - 1)
+            self._check_refuel_need()
+            await self._confirm_dispatch(behaviour, str(msg.sender), payload)
+        else:
+            self.log(
+                "No dispatch sent for alert",
+                payload.get("alert", {}).get("id"),
+                "due to constraints.",
+            )
 
     def _safe_load(self, body: str | None) -> Dict[str, Any]:
         if not body:
@@ -163,23 +174,134 @@ class RangerAgent(Agent):
             self.log("Cannot plan path: non-numeric alert position", alert_pos)
             return []
 
-        start = self._current_position
-        path: List[Tuple[int, int]] = [start]
-        current_x, current_y = start
+        if not self._ensure_fuel_for_mission(target):
+            self.log(
+                "Skipping alert",
+                payload.get("alert", {}).get("id"),
+                "due to fuel constraints.",
+            )
+            return []
 
-        step = 1 if target[0] >= current_x else -1
-        for x in range(current_x + step, target[0] + step, step):
-            path.append((x, current_y))
-        current_x = target[0]
-
-        step = 1 if target[1] >= current_y else -1
-        for y in range(current_y + step, target[1] + step, step):
-            path.append((current_x, y))
-
-        return path
+        return self._build_manhattan_path(self._current_position, target)
 
     def _update_field_position(self, new_position: Tuple[int, int]) -> None:
         self._current_position = new_position
+
+    def _manhattan_distance(
+        self, start: Tuple[int, int], target: Tuple[int, int]
+    ) -> int:
+        return abs(start[0] - target[0]) + abs(start[1] - target[1])
+
+    def _build_manhattan_path(
+        self, start: Tuple[int, int], target: Tuple[int, int]
+    ) -> List[Tuple[int, int]]:
+        path: List[Tuple[int, int]] = [start]
+        current_x, current_y = start
+
+        if current_x != target[0]:
+            step_x = 1 if target[0] > current_x else -1
+            for x in range(current_x + step_x, target[0] + step_x, step_x):
+                path.append((x, current_y))
+        current_x = target[0]
+
+        if current_y != target[1]:
+            step_y = 1 if target[1] > current_y else -1
+            for y in range(current_y + step_y, target[1] + step_y, step_y):
+                path.append((current_x, y))
+
+        return path
+
+    def _fuel_needed_for_mission(
+        self, start: Tuple[int, int], target: Tuple[int, int]
+    ) -> float:
+        distance_to_target = self._manhattan_distance(start, target)
+        distance_to_base = self._manhattan_distance(target, self._base_position)
+        return (distance_to_target + distance_to_base) * self.fuel_per_step
+
+    def _ensure_fuel_for_mission(self, target: Tuple[int, int]) -> bool:
+        required = self._fuel_needed_for_mission(self._current_position, target)
+        if self.fuel_level >= required:
+            return True
+
+        if self._current_position != self._base_position:
+            self.log(
+                "Fuel insufficient for mission. Returning to base to refuel first."
+            )
+            self._travel_to_base()
+            required = self._fuel_needed_for_mission(self._current_position, target)
+
+        if self.fuel_level >= required:
+            return True
+
+        if self._current_position == self._base_position and self.fuel_level < self.max_fuel:
+            self._refuel()
+            required = self._fuel_needed_for_mission(self._current_position, target)
+            if self.fuel_level >= required:
+                return True
+
+        if required > self.max_fuel:
+            self.log(
+                "Alert target requires",
+                f"{required:.1f}",
+                "fuel but maximum is",
+                f"{self.max_fuel:.1f}.",
+            )
+        else:
+            self.log(
+                "Fuel level still insufficient for mission. Current:",
+                f"{self.fuel_level:.1f}/{self.max_fuel:.1f}",
+            )
+        return False
+
+    def _consume_fuel(self, steps: int) -> None:
+        if steps <= 0 or self.fuel_per_step <= 0:
+            return
+        consumed = steps * self.fuel_per_step
+        previous = self.fuel_level
+        self.fuel_level = max(0.0, self.fuel_level - consumed)
+        if self.fuel_level < previous:
+            self.log(
+                "Fuel status",
+                f"{self.fuel_level:.1f}/{self.max_fuel:.1f}",
+            )
+
+    def _check_refuel_need(self) -> None:
+        if self._current_position == self._base_position:
+            return
+        distance_to_base = self._manhattan_distance(
+            self._current_position, self._base_position
+        )
+        minimum_required = (
+            distance_to_base + self._fuel_return_margin_steps
+        ) * self.fuel_per_step
+        if self.fuel_level <= minimum_required:
+            self.log("Fuel low after mission. Returning to base to refuel.")
+            self._travel_to_base()
+
+    def _travel_to_base(self) -> None:
+        if self._current_position == self._base_position:
+            self._refuel()
+            return
+
+        path = self._build_manhattan_path(
+            self._current_position, self._base_position
+        )
+        if len(path) <= 1:
+            self._current_position = self._base_position
+            self._refuel()
+            return
+        route_str = " -> ".join(f"({x},{y})" for x, y in path)
+        self.log("Returning to base", route_str)
+        self._consume_fuel(len(path) - 1)
+        self._current_position = self._base_position
+        self.log("Ranger arrived at base to refuel.")
+        self._refuel()
+
+    def _refuel(self) -> None:
+        if self.fuel_level >= self.max_fuel:
+            return
+        self.fuel_level = self.max_fuel
+        self.log("Ranger refueled to full capacity.")
 
     class AlertReceptionBehaviour(CyclicBehaviour):
         def __init__(self, ranger: "RangerAgent") -> None:
