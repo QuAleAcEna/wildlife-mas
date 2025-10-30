@@ -47,6 +47,9 @@ class DroneAgent(Agent):
         charge_rate_per_tick: float = 20.0,
         base_position: Tuple[int, int] = (0, 0),
         patrol_waypoint_count: int = 10,
+        patrol_sector: Optional[Tuple[int, int, int, int]] = None,
+        patrol_seed: Optional[int] = None,
+        callsign: Optional[str] = None,
     ):
         """Configure the drone's patrol parameters, sensors, and battery model."""
         super().__init__(jid, password)
@@ -58,6 +61,7 @@ class DroneAgent(Agent):
         self.patrol_period_s = patrol_period_s
         self.base_position = base_position
         self.patrol_waypoint_count = max(0, patrol_waypoint_count)
+        self._sector_bounds = self._normalize_sector(patrol_sector)
         self.max_battery = max(0.0, battery_capacity)
         self.battery_consumption_per_step = max(0.0, battery_consumption_per_step)
         self.charge_rate_per_tick = max(0.0, charge_rate_per_tick)
@@ -69,6 +73,10 @@ class DroneAgent(Agent):
         self._next_battery_log_pct: Optional[float] = (
             90.0 if self.max_battery > 0 else None
         )
+        seed = patrol_seed if patrol_seed is not None else secrets.randbits(64)
+        self._patrol_rng = random.Random(seed)
+        self.patrol_seed = seed
+        self.callsign = (callsign or str(self.jid)).upper()
         self._planned_patrol_targets: List[Tuple[int, int]] = []
         self._patrol_route: List[Tuple[int, int]] = self._build_patrol_route()
         self._route_index: int = -1
@@ -125,8 +133,39 @@ class DroneAgent(Agent):
             return 0.0
         return max(0.0, distance_m / self.cruise_speed_mps)
 
+    def _normalize_sector(
+        self, sector: Optional[Tuple[int, int, int, int]]
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """Clamp a patrol sector to reserve bounds and validate coordinates."""
+        if sector is None:
+            return None
+        x_min, y_min, x_max, y_max = sector
+        x_min = max(0, min(self.reserve.width - 1, x_min))
+        y_min = max(0, min(self.reserve.height - 1, y_min))
+        x_max = max(0, min(self.reserve.width - 1, x_max))
+        y_max = max(0, min(self.reserve.height - 1, y_max))
+        if x_min > x_max or y_min > y_max:
+            raise ValueError(
+                f"Invalid patrol sector bounds after clamping: {(x_min, y_min, x_max, y_max)}"
+            )
+        return (x_min, y_min, x_max, y_max)
+
+    def _within_sector(self, cell: Tuple[int, int]) -> bool:
+        """Return True if the coordinate falls inside the configured patrol sector."""
+        if not self._sector_bounds:
+            return True
+        x_min, y_min, x_max, y_max = self._sector_bounds
+        return x_min <= cell[0] <= x_max and y_min <= cell[1] <= y_max
+
     def _build_patrol_route(self) -> List[Tuple[int, int]]:
-        """Generate a patrol loop that avoids no-fly zones and returns to base."""
+        """Generate a patrol loop that avoids no-fly zones and respects patrol sectors."""
+        if self._sector_bounds and not self._within_sector(self.base_position):
+            self.log(
+                "Base position",
+                self.base_position,
+                "is outside configured patrol sector",
+                self._sector_bounds,
+            )
         width = max(1, self.reserve.width)
         height = max(1, self.reserve.height)
         free_cells: Set[Tuple[int, int]] = {
@@ -134,6 +173,7 @@ class DroneAgent(Agent):
             for y in range(height)
             for x in range(width)
             if not self.reserve.is_no_fly((x, y))
+            and self._within_sector((x, y))
         }
         if not free_cells:
             self._walkable_cells = {self.base_position}
@@ -166,7 +206,7 @@ class DroneAgent(Agent):
         available_targets = [cell for cell in self._walkable_cells if cell != start]
         if available_targets and self.patrol_waypoint_count > 0:
             waypoint_count = min(len(available_targets), self.patrol_waypoint_count)
-            random_targets = random.sample(available_targets, waypoint_count)
+            random_targets = self._patrol_rng.sample(available_targets, waypoint_count)
             for target in random_targets:
                 path = self._shortest_path(current, target, self._walkable_cells)
                 if not path:
@@ -283,16 +323,17 @@ class DroneAgent(Agent):
 
     async def _maybe_emit_patrol_alert(
         self, behaviour: "DroneAgent.PatrolBehaviour"
-    ) -> None: # send patrol alert with 10% probability at random times, change to be based on pochers or other factors
+    ) -> None:
         """Allow the drone to raise opportunistic alerts while patrolling."""
-        if random.random() >= 0.1:  # 10% chance to emit a patrol alert
+        # TODO: replace random trigger with detections tied to poachers, movement, etc.
+        if self._patrol_rng.random() >= 0.1:  # 10% chance to emit a patrol alert
             return
         alert_id = f"{self.jid}-patrol-{secrets.token_hex(4)}"
         alert_payload = {
             "sensor": str(self.jid),
             "id": alert_id,
             "pos": (self.position[0], self.position[1]),
-            "confidence": round(random.uniform(0.55, 0.9), 2),
+            "confidence": round(self._patrol_rng.uniform(0.55, 0.9), 2),
             "ts": dt.datetime.utcnow().isoformat() + "Z",
         }
         ranger_payload = {
@@ -307,7 +348,7 @@ class DroneAgent(Agent):
 
     def log(self, *args: Any) -> None:
         """Prefix drone log messages for easier tracing in shared consoles."""
-        print("[DRONE]", *args)
+        print(f"[DRONE-{self.callsign}]", *args)
 
     def _estimate_energy_cost(
         self, start: Tuple[int, int], goal: Tuple[int, int]

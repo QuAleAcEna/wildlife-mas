@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, List, Tuple
 
 import spade
 from dotenv import load_dotenv
@@ -20,6 +20,25 @@ DRONE_JID = os.getenv("DRONE_JID")
 DRONE_PASS = os.getenv("DRONE_PASS")
 RANGER_JID = os.getenv("RANGER_JID")
 RANGER_PASS = os.getenv("RANGER_PASS")
+
+
+def _with_resource(jid: str, resource: str) -> str:
+    """Append/replace the resource part of a JID for multi-session use."""
+    if "/" in jid:
+        base, _ = jid.split("/", 1)
+        return f"{base}/{resource}"
+    return f"{jid}/{resource}"
+
+
+def _pick_sector_base(reserve: Reserve, sector: Tuple[int, int, int, int]) -> Tuple[int, int]:
+    """Choose a deterministic base cell within the patrol sector that is not no-fly."""
+    x_min, y_min, x_max, y_max = sector
+    for y in range(y_min, y_max + 1):
+        for x in range(x_min, x_max + 1):
+            if not reserve.is_no_fly((x, y)):
+                return (x, y)
+    # Fall back to sector origin even if it overlaps a no-fly area to avoid crashes.
+    return (x_min, y_min)
 
 
 def _require_env_vars() -> None:
@@ -55,11 +74,42 @@ async def main(args: Any = None) -> None:
     # Start the shared simulation clock before agents query it.
     reserve.clock.start()
     ranger = RangerAgent(RANGER_JID, RANGER_PASS, clock=reserve.clock)
-    drone = DroneAgent(DRONE_JID, DRONE_PASS, ranger_jid=RANGER_JID, reserve=reserve)
+    drone_count = 3
+    callsigns = ["1", "2", "3"]
+    sector_width = max(1, reserve.width // drone_count)
+    drones: List[DroneAgent] = []
+    for idx in range(drone_count):
+        x_min = idx * sector_width
+        x_max = reserve.width - 1 if idx == drone_count - 1 else (idx + 1) * sector_width - 1
+        sector = (x_min, 0, x_max, reserve.height - 1)
+        jid = _with_resource(DRONE_JID, f"drone{idx + 1}")
+        if idx == 0:
+            base_position = (0, 0)
+        else:
+            base_position = _pick_sector_base(reserve, sector)
+        logging.info(
+            "Assigning drone %s (callsign %s) to sector %s with base %s",
+            jid,
+            callsigns[idx % len(callsigns)],
+            sector,
+            base_position,
+        )
+        drone = DroneAgent(
+            jid,
+            DRONE_PASS,
+            ranger_jid=RANGER_JID,
+            reserve=reserve,
+            base_position=base_position,
+            patrol_sector=sector,
+            patrol_seed=idx + 1,
+            callsign=callsigns[idx % len(callsigns)],
+        )
+        drones.append(drone)
     sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
 
     await ranger.start(auto_register=True)
-    await drone.start(auto_register=True)
+    for drone in drones:
+        await drone.start(auto_register=True)
     await sensor.start(auto_register=True)
 
     print("Agents running. Press Ctrl+C to stop.")
@@ -71,7 +121,8 @@ async def main(args: Any = None) -> None:
     finally:
         await reserve.clock.stop()
         await sensor.stop()
-        await drone.stop()
+        for drone in drones:
+            await drone.stop()
         await ranger.stop()
 
 
