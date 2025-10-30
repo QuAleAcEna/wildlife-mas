@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour
 from spade.message import Message
+from spade.template import Template
 
 from core.messages import ALERT_ANOMALY, INFORM, TELEMETRY, json_dumps, json_loads
 
@@ -17,10 +18,21 @@ class RangerAgent(Agent):
         super().__init__(jid, password)
         self.dispatch_delay_s = dispatch_delay_s
         self.alert_history: List[Dict[str, Any]] = []
+        self.telemetry_history: List[Dict[str, Any]] = []
 
     async def setup(self) -> None:
         self.log("Ranger ready for alerts…")
-        self.add_behaviour(self.AlertReceptionBehaviour(self))
+        alert_behaviour = self.AlertReceptionBehaviour(self)
+        alert_template = Template()
+        alert_template.set_metadata("performative", INFORM)
+        alert_template.set_metadata("type", ALERT_ANOMALY)
+        self.add_behaviour(alert_behaviour, alert_template)
+
+        telemetry_behaviour = self.TelemetryReceptionBehaviour(self)
+        telemetry_template = Template()
+        telemetry_template.set_metadata("performative", INFORM)
+        telemetry_template.set_metadata("type", TELEMETRY)
+        self.add_behaviour(telemetry_behaviour, telemetry_template)
 
     async def handle_drone_notification(
         self, behaviour: "RangerAgent.AlertReceptionBehaviour", msg: Message
@@ -68,6 +80,23 @@ class RangerAgent(Agent):
         msg.body = json_dumps(response)
         await behaviour.send(msg)
 
+    async def handle_drone_telemetry(
+        self, _: "RangerAgent.TelemetryReceptionBehaviour", msg: Message
+    ) -> None:
+        payload = self._safe_load(msg.body)
+        if not payload:
+            self.log("Received empty telemetry from", msg.sender)
+            return
+
+        self.telemetry_history.append(payload)
+        self.log(
+            "Telemetry update from",
+            payload.get("drone", str(msg.sender)),
+            "position",
+            payload.get("position"),
+            f"route {payload.get('route_index')} / {payload.get('route_length')}",
+        )
+
     def log(self, *args: Any) -> None:
         print("[RANGER]", *args)
 
@@ -80,6 +109,15 @@ class RangerAgent(Agent):
             msg = await self.receive(timeout=0.5)
             if not msg:
                 return
-            if msg.get_metadata("type") != ALERT_ANOMALY:
-                return
             await self.ranger.handle_drone_notification(self, msg)
+
+    class TelemetryReceptionBehaviour(CyclicBehaviour):
+        def __init__(self, ranger: "RangerAgent") -> None:
+            super().__init__()
+            self.ranger = ranger
+
+        async def run(self) -> None:
+            msg = await self.receive(timeout=0.5)
+            if not msg:
+                return
+            await self.ranger.handle_drone_telemetry(self, msg)
