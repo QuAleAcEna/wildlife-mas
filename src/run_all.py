@@ -23,6 +23,7 @@ RANGER_PASS = os.getenv("RANGER_PASS")
 
 
 def _require_env_vars() -> None:
+    """Ensure the credentials required for SPADE login are available."""
     missing = [
         name
         for name, value in {
@@ -41,6 +42,7 @@ def _require_env_vars() -> None:
 
 
 async def main(args: Any = None) -> None:
+    """Boot the simulated reserve, agents, and keep the event loop alive."""
     _require_env_vars()
 
     logging.basicConfig(
@@ -50,6 +52,7 @@ async def main(args: Any = None) -> None:
 
     reserve = Reserve()
     print("Reserve no-fly cells:", sorted(reserve.no_fly))
+    # Start the shared simulation clock before agents query it.
     reserve.clock.start()
     ranger = RangerAgent(RANGER_JID, RANGER_PASS, clock=reserve.clock)
     drone = DroneAgent(DRONE_JID, DRONE_PASS, ranger_jid=RANGER_JID, reserve=reserve)
@@ -72,7 +75,7 @@ async def main(args: Any = None) -> None:
         await ranger.stop()
 
 
-    # Run against SPADE's embedded XMPP server to skip external authentication.
+# Run against SPADE's embedded XMPP server to skip external authentication.
 def _patch_pyjabber_handle_user() -> None:
     """Patch pyjabber admin endpoint for SQLAlchemy 2.x compatibility."""
     try:

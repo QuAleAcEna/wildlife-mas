@@ -26,10 +26,12 @@ _DEFAULT_SAMPLE_SIZE = 512
 
 
 def _default_sampler(_: Dict[str, Any], size: int = _DEFAULT_SAMPLE_SIZE) -> bytes:
+    """Fallback sampler that emits pseudo-random bytes for attachments."""
     return secrets.token_bytes(size)
 
 
 class DroneAgent(Agent):
+    """Autonomous drone that patrols the reserve and assists ranger dispatches."""
     def __init__(
         self,
         jid: str,
@@ -46,6 +48,7 @@ class DroneAgent(Agent):
         base_position: Tuple[int, int] = (0, 0),
         patrol_waypoint_count: int = 10,
     ):
+        """Configure the drone's patrol parameters, sensors, and battery model."""
         super().__init__(jid, password)
         self.ranger_jid = ranger_jid
         self.cruise_speed_mps = cruise_speed_mps
@@ -74,6 +77,7 @@ class DroneAgent(Agent):
         )
 
     async def setup(self) -> None:
+        """Start behaviours for relaying alerts and patrolling the reserve."""
         self.add_behaviour(self.AlertRelayBehaviour(self))
         self.add_behaviour(
             self.PatrolBehaviour(self, period=self.patrol_period_s)
@@ -82,6 +86,7 @@ class DroneAgent(Agent):
     async def handle_sensor_alert(
         self, behaviour: "DroneAgent.AlertRelayBehaviour", msg: Message
     ) -> None:
+        """Translate sensor anomaly alerts into ranger notifications with evidence."""
         if msg.get_metadata("type") != ALERT_ANOMALY:
             return
         sensor = str(msg.sender)
@@ -94,6 +99,7 @@ class DroneAgent(Agent):
         )
 
     def _safe_load(self, body: Optional[str]) -> Dict[str, Any]:
+        """Protect against malformed JSON messages by falling back to raw data."""
         if not body:
             return {}
         try:
@@ -102,6 +108,7 @@ class DroneAgent(Agent):
             return {"raw_body": body}
 
     def _build_ack_payload(self, sensor: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Compose a telemetry acknowledgment back to the originating sensor."""
         distance = float(payload.get("distance_m", 0.0))
         eta = self._estimate_eta(distance)
         return {
@@ -113,11 +120,13 @@ class DroneAgent(Agent):
         }
 
     def _estimate_eta(self, distance_m: float) -> float:
+        """Convert a distance in meters into seconds at the current cruise speed."""
         if self.cruise_speed_mps <= 0:
             return 0.0
         return max(0.0, distance_m / self.cruise_speed_mps)
 
-    def _build_patrol_route(self) -> List[Tuple[int, int]]: # gerar rota de patrulha, evitando zonas proibidas , aleatoriamente (mudar depois para baseados em eventos)
+    def _build_patrol_route(self) -> List[Tuple[int, int]]:
+        """Generate a patrol loop that avoids no-fly zones and returns to base."""
         width = max(1, self.reserve.width)
         height = max(1, self.reserve.height)
         free_cells: Set[Tuple[int, int]] = {
@@ -145,6 +154,7 @@ class DroneAgent(Agent):
         if self.base_position in reachable:
             start = self.base_position
         else:
+            # Choose the first reachable cell to seed the patrol if base is isolated.
             start = next((cell for cell in ordered_targets if cell in reachable), start_candidate)
 
         self._walkable_cells = set(reachable)
@@ -160,6 +170,7 @@ class DroneAgent(Agent):
             for target in random_targets:
                 path = self._shortest_path(current, target, self._walkable_cells)
                 if not path:
+                    # If the BFS fails the tile is effectively isolated; ignore it.
                     continue
                 for step in path[1:]:
                     route.append(step)
@@ -170,6 +181,7 @@ class DroneAgent(Agent):
             back_path = self._shortest_path(current, start, self._walkable_cells)
             if back_path:
                 for step in back_path[1:]:
+                    # Always close the loop so the drone eventually returns home.
                     route.append(step)
 
         self._planned_patrol_targets = planned_targets
@@ -181,6 +193,7 @@ class DroneAgent(Agent):
         goal: Tuple[int, int],
         walkable: Set[Tuple[int, int]],
     ) -> Optional[List[Tuple[int, int]]]:
+        """Breadth-first search to find the cheapest walkable path between cells."""
         if start == goal:
             return [start]
 
@@ -202,6 +215,7 @@ class DroneAgent(Agent):
         start: Tuple[int, int],
         free_cells: Set[Tuple[int, int]],
     ) -> Set[Tuple[int, int]]:
+        """Convenience flood fill used to limit patrol targets to connected tiles."""
         queue = deque([start])
         reachable = {start}
         while queue:
@@ -214,6 +228,7 @@ class DroneAgent(Agent):
         return reachable
 
     def _neighbors(self, cell: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Return valid orthogonal neighbors constrained to the reserve bounds."""
         x, y = cell
         candidates = [
             (x + 1, y),
@@ -230,12 +245,14 @@ class DroneAgent(Agent):
         return neighbors
 
     def _next_waypoint(self) -> Tuple[int, int]:
+        """Advance along the patrol route, looping when necessary."""
         if not self._patrol_route:
             return (0, 0)
         self._route_index = (self._route_index + 1) % len(self._patrol_route)
         return self._patrol_route[self._route_index]
 
     def _current_status(self) -> str:
+        """Expose a human readable status for telemetry broadcasts."""
         if self.is_charging:
             return "charging"
         if self.is_returning_to_base:
@@ -245,6 +262,7 @@ class DroneAgent(Agent):
     async def _broadcast_patrol_status(
         self, behaviour: "DroneAgent.PatrolBehaviour"
     ) -> None:
+        """Send periodic telemetry updates to the ranger command agent."""
         payload = {
             "drone": str(self.jid),
             "position": {"x": self.position[0], "y": self.position[1]},
@@ -264,11 +282,13 @@ class DroneAgent(Agent):
         await behaviour.send(msg)
 
     def log(self, *args: Any) -> None:
+        """Prefix drone log messages for easier tracing in shared consoles."""
         print("[DRONE]", *args)
 
     def _estimate_energy_cost(
         self, start: Tuple[int, int], goal: Tuple[int, int]
     ) -> float:
+        """Approximate battery requirement to travel between two points."""
         if start == goal:
             return 0.0
         walkable = self._walkable_cells or {start}
@@ -281,6 +301,7 @@ class DroneAgent(Agent):
     def _consume_battery_for_move(
         self, previous: Tuple[int, int], current: Tuple[int, int]
     ) -> None:
+        """Spend battery when physically moving to a new grid cell."""
         if previous == current or self.battery_consumption_per_step <= 0:
             return
         before_level = self.battery_level
@@ -290,6 +311,7 @@ class DroneAgent(Agent):
         self._log_battery_drop_if_needed(before_level)
 
     def _log_battery_drop_if_needed(self, previous_level: float) -> None:
+        """Emit log lines only when crossing 10% battery thresholds."""
         if (
             self._next_battery_log_pct is None
             or self.max_battery <= 0
@@ -313,15 +335,18 @@ class DroneAgent(Agent):
                 break
 
     def _should_return_to_base(self) -> bool:
+        """Decide when to abort patrol so the drone has enough energy to get home."""
         if self.is_returning_to_base or self.is_charging:
             return False
         energy_to_base = self._estimate_energy_cost(self.position, self.base_position)
         if energy_to_base == float("inf"):
             return False
         threshold = energy_to_base + self.battery_consumption_per_step
+        # Leave a one-step buffer so we do not strand the drone on the way back.
         return self.battery_level <= threshold
 
     def _begin_return_to_base(self) -> None:
+        """Schedule a path back to base and flag the state machine accordingly."""
         walkable = self._walkable_cells or {self.position}
         path = self._shortest_path(self.position, self.base_position, walkable)
         if not path:
@@ -343,6 +368,7 @@ class DroneAgent(Agent):
         )
 
     def _advance_return_path(self, previous_position: Tuple[int, int]) -> None:
+        """Step along the buffered return route until the drone reaches base."""
         if not self._return_path:
             self.is_returning_to_base = False
             self.is_charging = True
@@ -365,6 +391,7 @@ class DroneAgent(Agent):
             self.log("Arrived at base, starting recharge.")
 
     def _perform_charging(self) -> None:
+        """Incrementally recharge the battery, then flip state when full."""
         if self.battery_level >= self.max_battery:
             self._finish_charging()
             return
@@ -378,6 +405,7 @@ class DroneAgent(Agent):
             self._finish_charging()
 
     def _finish_charging(self) -> None:
+        """Reset patrol state once the battery hits full capacity."""
         self.battery_level = self.max_battery
         self.is_charging = False
         self._route_index = -1
@@ -387,6 +415,7 @@ class DroneAgent(Agent):
         self._next_battery_log_pct = 90.0 if self.max_battery > 0 else None
 
     async def _tick_patrol(self, behaviour: "DroneAgent.PatrolBehaviour") -> None:
+        """Main patrol finite-state loop invoked each period."""
         previous_position = self.position
 
         if not self.is_charging and self._should_return_to_base():
@@ -403,6 +432,7 @@ class DroneAgent(Agent):
                 and next_position != self.base_position
                 and self._planned_patrol_targets
             ):
+                # Announce the patrol queue on the first leg to aid debugging.
                 targets_str = ", ".join(
                     f"({x},{y})" for x, y in self._planned_patrol_targets
                 )
@@ -418,6 +448,7 @@ class DroneAgent(Agent):
         await self._broadcast_patrol_status(behaviour)
 
     async def _collect_attachments(self, payload: Dict[str, Any]) -> Dict[str, str]:
+        """Capture photo/IR samples concurrently and return base64 payloads."""
         photo_task = asyncio.create_task(
             asyncio.to_thread(self.photo_sampler, payload)
         )
@@ -434,6 +465,7 @@ class DroneAgent(Agent):
         sensor: str,
         ack_payload: Dict[str, Any],
     ) -> None:
+        """Send the sensor a quick ACK so it knows the alert was received."""
         reply = Message(to=sensor)
         reply.set_metadata("performative", INFORM)
         reply.set_metadata("type", TELEMETRY)
@@ -448,6 +480,7 @@ class DroneAgent(Agent):
         ack_payload: Dict[str, Any],
         attachments: Dict[str, str],
     ) -> None:
+        """Forward the full alert package to the ranger command agent."""
         ranger_payload = {
             "sensor": sensor,
             "drone": str(self.jid),
@@ -459,24 +492,31 @@ class DroneAgent(Agent):
         await behaviour.send(msg)
 
     class AlertRelayBehaviour(CyclicBehaviour):
+        """Cyclic behaviour that receives sensor alerts addressed to the drone."""
         def __init__(self, drone: "DroneAgent") -> None:
+            """Store a reference to the owning drone agent."""
             super().__init__()
             self.drone = drone
 
         async def run(self) -> None:
+            """Listen for sensor alerts and let the drone process them."""
             msg = await self.receive(timeout=0.1)
             if not msg:
                 return
             if msg.get_metadata("type") != ALERT_ANOMALY:
+                # Telemetry and other categories fall through to other behaviours.
                 self.drone.log(
                     "Ignoring non-alert message from", str(msg.sender)
                 )
                 return
             await self.drone.handle_sensor_alert(self, msg)
     class PatrolBehaviour(PeriodicBehaviour):
+        """Periodic behaviour that ticks the drone patrol control loop."""
         def __init__(self, drone: "DroneAgent", period: float) -> None:
+            """Tick the drone FSM at a fixed cadence."""
             super().__init__(period=period)
             self.drone = drone
 
         async def run(self) -> None:
+            """Delegate the actual patrol logic to the drone."""
             await self.drone._tick_patrol(self)

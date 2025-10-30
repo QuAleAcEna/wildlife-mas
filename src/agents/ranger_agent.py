@@ -22,6 +22,7 @@ class RangerAgent(Agent):
         dispatch_delay_s: float = 12.0,
         clock: Optional[EnvironmentClock] = None,
     ):
+        """Initialise ranger state, including fuel levels and simulated clock."""
         super().__init__(jid, password)
         self.dispatch_delay_s = dispatch_delay_s
         self.alert_history: List[Dict[str, Any]] = []
@@ -35,6 +36,7 @@ class RangerAgent(Agent):
         self._fuel_return_margin_steps: int = 5
 
     async def setup(self) -> None:
+        """Register behaviours so the ranger reacts to alerts and telemetry."""
         self.log("Ranger ready for alerts…")
         alert_behaviour = self.AlertReceptionBehaviour(self)
         alert_template = Template()
@@ -51,6 +53,7 @@ class RangerAgent(Agent):
     async def handle_drone_notification(
         self, behaviour: "RangerAgent.AlertReceptionBehaviour", msg: Message
     ) -> None:
+        """Process new anomaly alerts and decide whether to dispatch the ranger."""
         payload = self._safe_load(msg.body)
         if not payload:
             self.log("Received empty notification from", msg.sender)
@@ -59,6 +62,7 @@ class RangerAgent(Agent):
         self.alert_history.append(payload)
 
         if not self._within_operating_hours():
+            # Avoid dispatching during downtime windows; alert stays logged for later.
             current_hour = self._current_hour()
             self.log(
                 "Outside operating hours (hour",
@@ -100,6 +104,7 @@ class RangerAgent(Agent):
             )
 
     def _safe_load(self, body: str | None) -> Dict[str, Any]:
+        """Best-effort JSON decode that keeps raw payloads for debugging."""
         if not body:
             return {}
         try:
@@ -113,6 +118,7 @@ class RangerAgent(Agent):
         drone: str,
         payload: Dict[str, Any],
     ) -> None:
+        """Tell the requesting drone that a ranger team is en route."""
         response = {
             "ranger": str(self.jid),
             "alert_id": payload.get("alert", {}).get("id"),
@@ -130,6 +136,7 @@ class RangerAgent(Agent):
     async def handle_drone_telemetry(
         self, _: "RangerAgent.TelemetryReceptionBehaviour", msg: Message
     ) -> None:
+        """Record patrol telemetry to keep situational awareness up to date."""
         payload = self._safe_load(msg.body)
         if not payload:
             self.log("Received empty telemetry from", msg.sender)
@@ -145,22 +152,27 @@ class RangerAgent(Agent):
         )
 
     def log(self, *args: Any) -> None:
+        """Consistent logging helper for ranger output."""
         print("[RANGER]", *args)
 
     def _current_hour(self) -> int:
+        """Read the current clock hour from simulation or real time."""
         if self.clock:
             return self.clock.current_hour % 24
         return dt.datetime.utcnow().hour
 
     def _within_operating_hours(self) -> bool:
+        """Return True when the ranger is allowed to deploy."""
         hour = self._current_hour()
         if 9 <= hour < 17:
             return True
         if hour >= 19 or hour <= 3:
+            # Evening window covers rapid response during peak poaching hours.
             return True
         return False
 
     def _plan_path_to_alert(self, payload: Dict[str, Any]) -> List[Tuple[int, int]]:
+        """Validate coordinates and build the movement plan to the alert site."""
         alert_pos = payload.get("alert", {}).get("pos")
         if not isinstance(alert_pos, (list, tuple)) or len(alert_pos) != 2:
             self.log(
@@ -185,16 +197,19 @@ class RangerAgent(Agent):
         return self._build_manhattan_path(self._current_position, target)
 
     def _update_field_position(self, new_position: Tuple[int, int]) -> None:
+        """Track the ranger's last known position to inform future routing."""
         self._current_position = new_position
 
     def _manhattan_distance(
         self, start: Tuple[int, int], target: Tuple[int, int]
     ) -> int:
+        """Return the grid distance between two points (cheapest orthogonal path)."""
         return abs(start[0] - target[0]) + abs(start[1] - target[1])
 
     def _build_manhattan_path(
         self, start: Tuple[int, int], target: Tuple[int, int]
     ) -> List[Tuple[int, int]]:
+        """Construct a simple orthogonal path by walking rows first then columns."""
         path: List[Tuple[int, int]] = [start]
         current_x, current_y = start
 
@@ -214,11 +229,13 @@ class RangerAgent(Agent):
     def _fuel_needed_for_mission(
         self, start: Tuple[int, int], target: Tuple[int, int]
     ) -> float:
+        """Calculate the round-trip consumption for a mission."""
         distance_to_target = self._manhattan_distance(start, target)
         distance_to_base = self._manhattan_distance(target, self._base_position)
         return (distance_to_target + distance_to_base) * self.fuel_per_step
 
     def _ensure_fuel_for_mission(self, target: Tuple[int, int]) -> bool:
+        """Check fuel, attempt refuel if possible, and block missions when unsafe."""
         required = self._fuel_needed_for_mission(self._current_position, target)
         if self.fuel_level >= required:
             return True
@@ -254,6 +271,7 @@ class RangerAgent(Agent):
         return False
 
     def _consume_fuel(self, steps: int) -> None:
+        """Reduce onboard fuel after moving between grid cells."""
         if steps <= 0 or self.fuel_per_step <= 0:
             return
         consumed = steps * self.fuel_per_step
@@ -266,6 +284,7 @@ class RangerAgent(Agent):
             )
 
     def _check_refuel_need(self) -> None:
+        """Trigger an immediate return if the ranger cannot safely reach base."""
         if self._current_position == self._base_position:
             return
         distance_to_base = self._manhattan_distance(
@@ -279,6 +298,7 @@ class RangerAgent(Agent):
             self._travel_to_base()
 
     def _travel_to_base(self) -> None:
+        """Walk the manhattan route back to base and refuel on arrival."""
         if self._current_position == self._base_position:
             self._refuel()
             return
@@ -298,28 +318,35 @@ class RangerAgent(Agent):
         self._refuel()
 
     def _refuel(self) -> None:
+        """Top up the ranger's fuel reserves at base."""
         if self.fuel_level >= self.max_fuel:
             return
         self.fuel_level = self.max_fuel
         self.log("Ranger refueled to full capacity.")
 
     class AlertReceptionBehaviour(CyclicBehaviour):
+        """Cyclic behaviour that waits for new drone anomaly reports."""
         def __init__(self, ranger: "RangerAgent") -> None:
+            """Keep a reference to the parent agent for delegating message handling."""
             super().__init__()
             self.ranger = ranger
 
         async def run(self) -> None:
+            """Poll the inbox and forward anomaly alerts to the ranger logic."""
             msg = await self.receive(timeout=0.5)
             if not msg:
                 return
             await self.ranger.handle_drone_notification(self, msg)
 
     class TelemetryReceptionBehaviour(CyclicBehaviour):
+        """Cyclic behaviour that listens for routine drone telemetry updates."""
         def __init__(self, ranger: "RangerAgent") -> None:
+            """Retain parent reference for telemetry forwarding."""
             super().__init__()
             self.ranger = ranger
 
         async def run(self) -> None:
+            """Relay telemetry messages to the parent agent for processing."""
             msg = await self.receive(timeout=0.5)
             if not msg:
                 return
