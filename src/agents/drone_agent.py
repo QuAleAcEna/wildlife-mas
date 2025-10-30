@@ -285,7 +285,7 @@ class DroneAgent(Agent):
         self, behaviour: "DroneAgent.PatrolBehaviour"
     ) -> None: # send patrol alert with 10% probability at random times, change to be based on pochers or other factors
         """Allow the drone to raise opportunistic alerts while patrolling."""
-        if random.random() >= 0.5:
+        if random.random() >= 0.1:  # 10% chance to emit a patrol alert
             return
         alert_id = f"{self.jid}-patrol-{secrets.token_hex(4)}"
         alert_payload = {
