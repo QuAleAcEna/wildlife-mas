@@ -5,7 +5,7 @@ import base64
 import datetime as dt
 import secrets
 from collections import deque
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, PeriodicBehaviour
@@ -39,6 +39,10 @@ class DroneAgent(Agent):
         ir_sampler: Optional[Callable[[Dict[str, Any]], bytes]] = None,
         reserve: Optional[Reserve] = None,
         patrol_period_s: float = 5.0,
+        battery_capacity: float = 100.0,
+        battery_consumption_per_step: float = 1.0,
+        charge_rate_per_tick: float = 20.0,
+        base_position: Tuple[int, int] = (0, 0),
     ):
         super().__init__(jid, password)
         self.ranger_jid = ranger_jid
@@ -47,9 +51,23 @@ class DroneAgent(Agent):
         self.ir_sampler = ir_sampler or _default_sampler
         self.reserve = reserve or Reserve()
         self.patrol_period_s = patrol_period_s
+        self.base_position = base_position
+        self.max_battery = max(0.0, battery_capacity)
+        self.battery_consumption_per_step = max(0.0, battery_consumption_per_step)
+        self.charge_rate_per_tick = max(0.0, charge_rate_per_tick)
+        self.battery_level = self.max_battery
+        self.is_returning_to_base: bool = False
+        self.is_charging: bool = False
+        self._return_path: Deque[Tuple[int, int]] = deque()
+        self._walkable_cells: Set[Tuple[int, int]] = set()
+        self._next_battery_log_pct: Optional[float] = (
+            90.0 if self.max_battery > 0 else None
+        )
         self._patrol_route: List[Tuple[int, int]] = self._build_patrol_route()
         self._route_index: int = -1
-        self.position: Tuple[int, int] = self._next_waypoint()
+        self.position: Tuple[int, int] = (
+            self._next_waypoint() if self._patrol_route else self.base_position
+        )
 
     async def setup(self) -> None:
         self.add_behaviour(self.AlertRelayBehaviour(self))
@@ -105,11 +123,26 @@ class DroneAgent(Agent):
             if not self.reserve.is_no_fly((x, y))
         }
         if not free_cells:
-            return [(0, 0)]
+            self._walkable_cells = {self.base_position}
+            return [self.base_position]
+
+        if self.base_position not in free_cells and not self.reserve.is_no_fly(
+            self.base_position
+        ):
+            free_cells.add(self.base_position)
 
         ordered_targets = sorted(free_cells, key=lambda cell: (cell[1], cell[0]))
-        start = ordered_targets[0]
-        reachable = self._reachable_cells(start, free_cells)
+        start_candidate = (
+            self.base_position if self.base_position in free_cells else ordered_targets[0]
+        )
+        reachable = self._reachable_cells(start_candidate, free_cells)
+        if self.base_position in reachable:
+            start = self.base_position
+        else:
+            start = next(
+                (cell for cell in ordered_targets if cell in reachable), start_candidate
+            )
+        self._walkable_cells = set(reachable)
         ordered_targets = [cell for cell in ordered_targets if cell in reachable]
         route: List[Tuple[int, int]] = [start]
         visited: Set[Tuple[int, int]] = {start}
@@ -188,6 +221,13 @@ class DroneAgent(Agent):
         self._route_index = (self._route_index + 1) % len(self._patrol_route)
         return self._patrol_route[self._route_index]
 
+    def _current_status(self) -> str:
+        if self.is_charging:
+            return "charging"
+        if self.is_returning_to_base:
+            return "returning"
+        return "patrolling"
+
     async def _broadcast_patrol_status(
         self, behaviour: "DroneAgent.PatrolBehaviour"
     ) -> None:
@@ -197,6 +237,11 @@ class DroneAgent(Agent):
             "route_index": self._route_index,
             "route_length": len(self._patrol_route),
             "timestamp": dt.datetime.utcnow().isoformat() + "Z",
+            "battery": {
+                "level": self.battery_level,
+                "capacity": self.max_battery,
+                "status": self._current_status(),
+            },
         }
         msg = Message(to=self.ranger_jid)
         msg.set_metadata("performative", INFORM)
@@ -206,6 +251,148 @@ class DroneAgent(Agent):
 
     def log(self, *args: Any) -> None:
         print("[DRONE]", *args)
+
+    def _estimate_energy_cost(
+        self, start: Tuple[int, int], goal: Tuple[int, int]
+    ) -> float:
+        if start == goal:
+            return 0.0
+        walkable = self._walkable_cells or {start}
+        path = self._shortest_path(start, goal, walkable)
+        if not path:
+            return float("inf")
+        steps = max(0, len(path) - 1)
+        return steps * self.battery_consumption_per_step
+
+    def _consume_battery_for_move(
+        self, previous: Tuple[int, int], current: Tuple[int, int]
+    ) -> None:
+        if previous == current or self.battery_consumption_per_step <= 0:
+            return
+        before_level = self.battery_level
+        self.battery_level = max(
+            0.0, self.battery_level - self.battery_consumption_per_step
+        )
+        self._log_battery_drop_if_needed(before_level)
+
+    def _log_battery_drop_if_needed(self, previous_level: float) -> None:
+        if (
+            self._next_battery_log_pct is None
+            or self.max_battery <= 0
+            or previous_level <= self.battery_level
+        ):
+            return
+        previous_pct = (previous_level / self.max_battery) * 100.0
+        current_pct = (self.battery_level / self.max_battery) * 100.0
+        while (
+            self._next_battery_log_pct is not None
+            and previous_pct > self._next_battery_log_pct >= current_pct
+        ):
+            threshold = self._next_battery_log_pct
+            self.log(
+                f"Battery at {threshold:.0f}% "
+                f"({self.battery_level:.1f}/{self.max_battery:.1f})."
+            )
+            self._next_battery_log_pct -= 10.0
+            if self._next_battery_log_pct < 0:
+                self._next_battery_log_pct = None
+                break
+
+    def _should_return_to_base(self) -> bool:
+        if self.is_returning_to_base or self.is_charging:
+            return False
+        energy_to_base = self._estimate_energy_cost(self.position, self.base_position)
+        if energy_to_base == float("inf"):
+            return False
+        threshold = energy_to_base + self.battery_consumption_per_step
+        return self.battery_level <= threshold
+
+    def _begin_return_to_base(self) -> None:
+        walkable = self._walkable_cells or {self.position}
+        path = self._shortest_path(self.position, self.base_position, walkable)
+        if not path:
+            self.log(
+                "Unable to compute a path back to base from", self.position
+            )
+            return
+        if len(path) <= 1:
+            self.is_returning_to_base = False
+            self.is_charging = True
+            self.log("Already at base, starting recharge.")
+            return
+        self._return_path = deque(path[1:])
+        self.is_returning_to_base = True
+        self.log(
+            "Battery low. Returning to base via",
+            len(self._return_path),
+            "steps.",
+        )
+
+    def _advance_return_path(self, previous_position: Tuple[int, int]) -> None:
+        if not self._return_path:
+            self.is_returning_to_base = False
+            self.is_charging = True
+            self.position = self.base_position
+            self.log("Arrived at base, starting recharge.")
+            return
+
+        next_position = self._return_path.popleft()
+        self.position = next_position
+        self._consume_battery_for_move(previous_position, next_position)
+        self.log(
+            "Returning to base",
+            self.position,
+            f"{len(self._return_path)} steps remaining.",
+        )
+        if not self._return_path:
+            self.is_returning_to_base = False
+            self.is_charging = True
+            self.position = self.base_position
+            self.log("Arrived at base, starting recharge.")
+
+    def _perform_charging(self) -> None:
+        if self.battery_level >= self.max_battery:
+            self._finish_charging()
+            return
+        if self.charge_rate_per_tick <= 0:
+            self.battery_level = self.max_battery
+        else:
+            self.battery_level = min(
+                self.max_battery, self.battery_level + self.charge_rate_per_tick
+            )
+        if self.battery_level >= self.max_battery:
+            self._finish_charging()
+
+    def _finish_charging(self) -> None:
+        self.battery_level = self.max_battery
+        self.is_charging = False
+        self._route_index = -1
+        self._patrol_route = self._build_patrol_route()
+        self.position = self.base_position
+        self.log("Battery full. Resuming patrol route.")
+        self._next_battery_log_pct = 90.0 if self.max_battery > 0 else None
+
+    async def _tick_patrol(self, behaviour: "DroneAgent.PatrolBehaviour") -> None:
+        previous_position = self.position
+
+        if not self.is_charging and self._should_return_to_base():
+            self._begin_return_to_base()
+
+        if self.is_charging:
+            self._perform_charging()
+        elif self.is_returning_to_base:
+            self._advance_return_path(previous_position)
+        else:
+            next_position = self._next_waypoint()
+            self.position = next_position
+            self._consume_battery_for_move(previous_position, next_position)
+            self.log(
+                "Patrolling waypoint",
+                self.position,
+                f"[{self._route_index + 1}/{len(self._patrol_route)}]",
+            )
+
+        await self._broadcast_patrol_status(behaviour)
 
     async def _collect_attachments(self, payload: Dict[str, Any]) -> Dict[str, str]:
         photo_task = asyncio.create_task(
@@ -269,10 +456,4 @@ class DroneAgent(Agent):
             self.drone = drone
 
         async def run(self) -> None:
-            self.drone.position = self.drone._next_waypoint()
-            self.drone.log(
-                "Patrolling waypoint",
-                self.drone.position,
-                f"[{self.drone._route_index + 1}/{len(self.drone._patrol_route)}]",
-            )
-            await self.drone._broadcast_patrol_status(self)
+            await self.drone._tick_patrol(self)

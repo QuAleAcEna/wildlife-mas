@@ -6,9 +6,18 @@ from typing import List, Optional, Tuple
 
 
 class EnvironmentClock:
-    def __init__(self, seconds_per_hour: float = 60.0) -> None:
+    def __init__(
+        self,
+        seconds_per_hour: float = 60.0,
+        start_day: int = 1,
+        start_hour: int = 8,
+    ) -> None:
         self.seconds_per_hour = seconds_per_hour
-        self.hours_elapsed: int = 0
+        self._start_day = start_day
+        self._start_hour = start_hour
+        self.total_hours_elapsed: int = 0
+        self.current_day: int = start_day
+        self.current_hour: int = start_hour
         self._task: Optional[asyncio.Task[None]] = None
         self._logger = logging.getLogger("environment.clock")
 
@@ -30,8 +39,25 @@ class EnvironmentClock:
     async def _run(self) -> None:
         while True:
             await asyncio.sleep(self.seconds_per_hour)
-            self.hours_elapsed += 1
-            self._logger.info("Environment hour %s reached", self.hours_elapsed)
+            self._advance_time()
+
+    def _advance_time(self) -> None:
+        self.total_hours_elapsed += 1
+        self.current_hour += 1
+        if self.current_hour >= 24:
+            self.current_hour = 0
+            self.current_day += 1
+        self._logger.info(
+            "Environment time Day %s %02d:00",
+            self.current_day,
+            self.current_hour,
+        )
+
+    def reset(self) -> None:
+        """Reset the clock to its initial state."""
+        self.total_hours_elapsed = 0
+        self.current_day = self._start_day
+        self.current_hour = self._start_hour
 
 
 @dataclass
