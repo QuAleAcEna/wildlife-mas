@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import threading
+import webbrowser
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, List, Optional, Tuple
+
+import spade
+from agents.animaltracker_agent import AnimalTrackerAgent
+from agents.drone_agent import DroneAgent
+from agents.ranger_agent import RangerAgent
+from agents.sensor_agent import SensorAgent
+from core.env import EnvironmentClock, Reserve
+from core.events import EventConfig, WorldEventEngine
+
+try:  # Support running as script or module
+    from .dashboard import DashboardStateWriter
+except ImportError:  # pragma: no cover - best effort fallback
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from interface.dashboard import DashboardStateWriter  # type: ignore
+from run_all import (
+    DRONE_JID,
+    DRONE_PASS,
+    RANGER_JID,
+    RANGER_PASS,
+    SENSOR_JID,
+    SENSOR_PASS,
+    _pick_sector_base,
+    _require_env_vars,
+    _with_resource,
+)
+
+
+def _start_static_server(directory: Path, preferred_port: int = 8000) -> Tuple[ThreadingHTTPServer, threading.Thread, str]:
+    """
+    Launch a simple HTTP server that serves the dashboard static assets.
+
+    Returns the server instance, its thread, and the URL to open.
+    """
+
+    class Handler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(directory), **kwargs)
+
+    last_error: Optional[Exception] = None
+    for port in (preferred_port, 0):
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            break
+        except OSError as exc:
+            last_error = exc
+            continue
+    else:
+        assert last_error is not None
+        raise last_error
+
+    thread = threading.Thread(target=server.serve_forever, name="DashboardHTTPServer", daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/"
+    return server, thread, url
+
+
+async def _run_events(engine: WorldEventEngine) -> None:
+    """Run the world event engine in the background."""
+    try:
+        while True:
+            engine.tick()
+            await asyncio.sleep(engine.cfg.tick_seconds)
+    except asyncio.CancelledError:
+        pass
+
+
+async def main(args: Any = None) -> None:
+    """Start the MAS stack alongside the dashboard state writer."""
+    _require_env_vars()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    reserve = Reserve(clock=EnvironmentClock(seconds_per_hour=10.0))
+    reserve.clock.start()
+
+    events = WorldEventEngine(
+        reserve=reserve,
+        clock=reserve.clock,
+        config=EventConfig(),
+    )
+    event_task = asyncio.create_task(_run_events(events), name="WorldEventEngine")
+
+    ranger = RangerAgent(RANGER_JID, RANGER_PASS, clock=reserve.clock)
+
+    # --- Drones setup (mirrors run_all.py) ---
+    drone_count = 3
+    callsigns = ["1", "2", "3"]
+    sector_width = max(1, reserve.width // drone_count)
+    drones: List[DroneAgent] = []
+    for idx in range(drone_count):
+        x_min = idx * sector_width
+        x_max = reserve.width - 1 if idx == drone_count - 1 else (idx + 1) * sector_width - 1
+        sector = (x_min, 0, x_max, reserve.height - 1)
+        jid = _with_resource(DRONE_JID, f"drone{idx + 1}")
+        if idx == 0:
+            base_position = (0, 0)
+        else:
+            base_position = _pick_sector_base(reserve, sector)
+        drone = DroneAgent(
+            jid,
+            DRONE_PASS,
+            ranger_jid=RANGER_JID,
+            reserve=reserve,
+            base_position=base_position,
+            patrol_sector=sector,
+            patrol_seed=idx + 1,
+            callsign=callsigns[idx % len(callsigns)],
+        )
+        drones.append(drone)
+
+    sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
+
+    trackers: List[AnimalTrackerAgent] = []
+    tracker_count = 2
+    for idx in range(tracker_count):
+        tracker_jid = _with_resource(DRONE_JID, f"tracker{idx + 1}")
+        tracker = AnimalTrackerAgent(
+            tracker_jid,
+            DRONE_PASS,
+            reserve=reserve,
+            target_jid=RANGER_JID,
+        )
+        trackers.append(tracker)
+
+    ranger.drone_jids = [d.jid for d in drones]
+
+    await ranger.start(auto_register=True)
+    for drone in drones:
+        await drone.start(auto_register=True)
+    await sensor.start(auto_register=True)
+    for tracker in trackers:
+        await tracker.start(auto_register=True)
+
+    output_path = Path(__file__).with_name("static").joinpath("state.json")
+    writer = DashboardStateWriter(
+        reserve=reserve,
+        events=events,
+        ranger=ranger,
+        drones=drones,
+        sensors=[sensor],
+        trackers=trackers,
+        output_path=output_path,
+        interval=1.0,
+    )
+    writer_task = asyncio.create_task(writer.run(), name="DashboardStateWriter")
+
+    print("Agents + dashboard writer running. Preparing dashboard web server…")
+
+    http_server: Optional[ThreadingHTTPServer] = None
+    http_thread: Optional[threading.Thread] = None
+    static_dir = Path(__file__).with_name("static")
+    try:
+        http_server, http_thread, url = _start_static_server(static_dir, preferred_port=8000)
+        print(f"Dashboard web UI available at {url}")
+        try:
+            webbrowser.open(url, new=2, autoraise=True)
+        except Exception:
+            print("Não consegui abrir o browser automaticamente; abre o link acima manualmente.")
+    except OSError as exc:
+        logging.warning("Could not start built-in HTTP server: %s", exc)
+        print(f"Serve {static_dir} manually with `python3 -m http.server 8000`.")
+
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        writer_task.cancel()
+        try:
+            await writer_task
+        except asyncio.CancelledError:
+            pass
+        await reserve.clock.stop()
+        if event_task:
+            event_task.cancel()
+            try:
+                await event_task
+            except asyncio.CancelledError:
+                pass
+        await sensor.stop()
+        for drone in drones:
+            await drone.stop()
+        for tracker in trackers:
+            await tracker.stop()
+        await ranger.stop()
+        if http_server:
+            http_server.shutdown()
+            http_server.server_close()
+
+
+if __name__ == "__main__":
+    spade.run(main(), embedded_xmpp_server=True)

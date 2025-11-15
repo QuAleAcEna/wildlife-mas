@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Week 6 · Wildlife Monitoring Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Wildlife MAS · Week 6 Interface</h1>
+        <p>Realtime overview of drones, rangers, sensors, trackers, and events.</p>
+      </div>
+      <div class="timestamp" id="timestamp">Awaiting data…</div>
+    </header>
+
+    <main class="layout">
+      <section class="panel map-panel">
+        <div class="panel-header">
+          <h2>Reserve Overview</h2>
+          <span id="clock-info"></span>
+        </div>
+        <canvas id="reserve-map" width="620" height="620"></canvas>
+        <div class="legend">
+          <div><span class="swatch nfz"></span>No-fly zone</div>
+          <div><span class="swatch drone"></span>Drone</div>
+          <div><span class="swatch ranger"></span>Ranger</div>
+          <div><span class="swatch sensor"></span>Sensor</div>
+          <div><span class="swatch tracker"></span>Animal tracker</div>
+          <div><span class="swatch poacher"></span>Poacher</div>
+          <div><span class="swatch herd"></span>Herd</div>
+        </div>
+      </section>
+
+      <section class="panel metrics-panel">
+        <div class="panel-header">
+          <h2>Key Metrics</h2>
+        </div>
+        <dl id="metrics"></dl>
+      </section>
+
+      <section class="panel alerts-panel">
+        <div class="panel-header">
+          <h2>Alerts &amp; CNP</h2>
+        </div>
+        <div class="alerts-container">
+          <h3>Recent Alerts</h3>
+          <div id="alerts-list" class="list"></div>
+        </div>
+        <div class="alerts-container">
+          <h3>Active CNP Negotiations</h3>
+          <div id="cnp-list" class="list"></div>
+        </div>
+      </section>
+
+      <section class="panel drones-panel">
+        <div class="panel-header">
+          <h2>Drone Fleet</h2>
+        </div>
+        <div id="drone-cards" class="card-grid"></div>
+      </section>
+
+      <section class="panel events-panel">
+        <div class="panel-header">
+          <h2>Live Entities</h2>
+        </div>
+        <div id="events-info" class="list"></div>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        Start the generator with
+        <code>python -m interface.run_dashboard</code> and serve this folder via
+        <code>python -m http.server</code>.
+      </p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
+

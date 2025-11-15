@@ -11,6 +11,9 @@ REJECT = "reject-proposal"
 
 ALERT_ANOMALY = "alert.anomaly"
 TELEMETRY = "telemetry"
+# NOVO #
+CNP_ALERT = "cnp.alert"
+# NOVO #
 
 
 def make_inform_alert(to_jid: str, payload: dict) -> Message:
