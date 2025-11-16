@@ -59,6 +59,9 @@ class RangerAgent(Agent):
         self._cnp_pending: Dict[str, Dict[str, Any]] = {}
         # NOVO #
 
+        # Ligação opcional a um writer externo (dashboard Week 6)
+        self.metrics_writer: Optional[Any] = None
+
     async def setup(self) -> None:
         self.log("Ranger ready for alerts…")
 
@@ -154,6 +157,10 @@ class RangerAgent(Agent):
             self._consume_fuel(len(path) - 1)
             self._check_refuel_need()
             self.dispatch_counts[category] += 1
+            if self.metrics_writer and path:
+                steps = max(0, len(path) - 1)
+                self.metrics_writer.record_response(steps)
+                self.metrics_writer.record_energy("RANGER", steps)
             await self._confirm_dispatch(behaviour, str(msg.sender), payload)
         else:
             self.log(

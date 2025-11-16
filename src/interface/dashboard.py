@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import atexit
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
 
 from agents.animaltracker_agent import AnimalTrackerAgent
 from agents.drone_agent import DroneAgent
@@ -42,31 +43,71 @@ class DashboardStateWriter:
     trackers: Sequence[AnimalTrackerAgent]
     output_path: Path
     interval: float = 1.0
+    history_limit: int = 900  # ~15 min de histórico
 
     def __post_init__(self) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._history: List[Dict[str, Any]] = []
+        self._response_times: List[int] = []
+        self._energy_log: List[Tuple[str, float]] = []
+        self._visited_cells: Set[Tuple[int, int]] = set()
+        self._history_file: Optional[Path] = None
+        self._kpi_file: Optional[Path] = None
+        self._exported_once = False
+        clock = getattr(self.events, "clock", None) or getattr(self.reserve, "clock", None)
+        self._clock_start_day = getattr(clock, "current_day", 1)
+        self._clock_start_hour = getattr(clock, "current_hour", 0)
+        self._seconds_per_hour = getattr(clock, "seconds_per_hour", 60.0) or 60.0
+        self._clock_start_ts = datetime.utcnow()
+        if clock and getattr(clock, "current_day", None) is not None:
+            self._last_recorded_hour: Optional[Tuple[int, int]] = (clock.current_day, clock.current_hour)
+        else:
+            self._last_recorded_hour = None
+
+    def record_response(self, steps: int) -> None:
+        if steps >= 0:
+            self._response_times.append(steps)
+
+    def record_energy(self, callsign: str, delta: float) -> None:
+        self._energy_log.append((callsign, delta))
 
     async def run(self) -> None:
         """Main loop that serializes state snapshots at fixed cadence."""
         while True:
             data = self._build_snapshot()
-            tmp_path = self.output_path.with_suffix(".tmp")
-            tmp_path.write_text(json.dumps(data, indent=2))
-            tmp_path.replace(self.output_path)
+            self.output_path.write_text(json.dumps(data, indent=2))
+            if self._should_record_history(data):
+                self._history.append(data)
+                if len(self._history) > self.history_limit:
+                    self._history.pop(0)
             await asyncio.sleep(self.interval)
 
     # ------------------------------------------------------------------
     # Snapshot assembly helpers
     # ------------------------------------------------------------------
+    def _current_clock_state(self) -> Tuple[int, int, float]:
+        clock = getattr(self.events, "clock", None) or getattr(self.reserve, "clock", None)
+        if clock and getattr(clock, "current_day", None) is not None:
+            day = getattr(clock, "current_day", self._clock_start_day)
+            hour = getattr(clock, "current_hour", self._clock_start_hour)
+            elapsed = getattr(clock, "total_hours_elapsed", 0.0)
+            return day, hour, elapsed
+        elapsed_seconds = (datetime.utcnow() - self._clock_start_ts).total_seconds()
+        sim_hours = int(elapsed_seconds / self._seconds_per_hour)
+        day = self._clock_start_day + (self._clock_start_hour + sim_hours) // 24
+        hour = (self._clock_start_hour + sim_hours) % 24
+        return day, hour, sim_hours
+
     def _build_snapshot(self) -> Dict[str, Any]:
         now = datetime.utcnow().isoformat() + "Z"
-        clock = getattr(self.reserve, "clock", None)
+        day, hour, elapsed_hours = self._current_clock_state()
         snapshot = {
             "generated_at": now,
             "clock": {
-                "day": getattr(clock, "current_day", None),
-                "hour": getattr(clock, "current_hour", None),
-                "seconds_per_hour": getattr(clock, "seconds_per_hour", None),
+                "day": day,
+                "hour": hour,
+                "seconds_per_hour": self._seconds_per_hour,
+                "total_hours_elapsed": elapsed_hours,
             },
             "reserve": {
                 "width": self.reserve.width,
@@ -89,6 +130,8 @@ class DashboardStateWriter:
             },
             "metrics": self._metrics_payload(),
         }
+        snapshot["kpis"] = self._kpi_payload(snapshot)
+        self._record_coverage(snapshot)
         return snapshot
 
     def _metrics_payload(self) -> Dict[str, Any]:
@@ -108,6 +151,123 @@ class DashboardStateWriter:
             "herds_active": len(self.events.herds),
         }
         return metrics
+
+    def _record_coverage(self, snapshot: Dict[str, Any]) -> None:
+        for drone in snapshot["agents"]["drones"]:
+            pos = drone.get("position")
+            if isinstance(pos, list) and len(pos) == 2:
+                self._visited_cells.add(tuple(pos))
+        ranger_pos = snapshot["agents"]["ranger"].get("position")
+        if isinstance(ranger_pos, list) and len(ranger_pos) == 2:
+            self._visited_cells.add(tuple(ranger_pos))
+
+    def _should_record_history(self, snapshot: Dict[str, Any]) -> bool:
+        clock = snapshot.get("clock", {})
+        key = (clock.get("day"), clock.get("hour"))
+        if key != self._last_recorded_hour:
+            self._last_recorded_hour = key
+            return True
+        return False
+
+    def _kpi_payload(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        drones = snapshot["agents"]["drones"]
+        avg_battery = (
+            round(sum(d.get("battery_pct") or 0.0 for d in drones) / len(drones), 2)
+            if drones
+            else 0.0
+        )
+        mean_response = (
+            round(sum(self._response_times) / len(self._response_times), 2)
+            if self._response_times
+            else 0.0
+        )
+        energy_per_threat = (
+            round(sum(delta for _, delta in self._energy_log) / len(self._energy_log), 2)
+            if self._energy_log
+            else 0.0
+        )
+        coverage = (
+            round((len(self._visited_cells) / (self.reserve.width * self.reserve.height)) * 100.0, 2)
+            if self._visited_cells
+            else 0.0
+        )
+
+        return {
+            "alerts_total": snapshot["metrics"]["alerts_total"],
+            "dispatch_total": snapshot["metrics"]["dispatch_total"],
+            "mean_response_steps": mean_response,
+            "avg_drone_battery_pct": avg_battery,
+            "ranger_fuel": self.ranger.fuel_level,
+            "energy_per_threat": energy_per_threat,
+            "coverage_rate": coverage,
+        }
+
+    def export_history(self, path: Path) -> None:
+        if not self._history:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(self._history, fh, indent=2)
+
+    def export_kpis_csv(self, path: Path) -> None:
+        import csv
+
+        if not self._history:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = [
+            "generated_at",
+            "alerts_total",
+            "dispatch_total",
+            "mean_response_steps",
+            "avg_drone_battery_pct",
+            "ranger_fuel",
+            "energy_per_threat",
+            "poachers_active",
+            "herds_active",
+            "coverage_rate",
+        ]
+        with path.open("w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            for entry in self._history:
+                kpis = entry.get("kpis", {})
+                writer.writerow(
+                    {
+                        "generated_at": entry.get("generated_at"),
+                        "alerts_total": kpis.get("alerts_total"),
+                        "dispatch_total": kpis.get("dispatch_total"),
+                        "mean_response_steps": kpis.get("mean_response_steps"),
+                        "avg_drone_battery_pct": kpis.get("avg_drone_battery_pct"),
+                        "ranger_fuel": kpis.get("ranger_fuel"),
+                        "energy_per_threat": kpis.get("energy_per_threat"),
+                        "poachers_active": len(entry.get("events", {}).get("poachers", [])),
+                        "herds_active": len(entry.get("events", {}).get("herds", [])),
+                        "coverage_rate": kpis.get("coverage_rate"),
+                    }
+                )
+
+    def register_export_paths(self, history_path: Path, csv_path: Path) -> None:
+        self._history_file = history_path
+        self._kpi_file = csv_path
+        atexit.register(self._export_at_exit)
+
+    def _export_at_exit(self) -> None:
+        if self._exported_once:
+            return
+        history_path = self._history_file
+        csv_path = self._kpi_file
+        if history_path:
+            try:
+                self.export_history(history_path)
+            except Exception:
+                pass
+        if csv_path:
+            try:
+                self.export_kpis_csv(csv_path)
+            except Exception:
+                pass
+        self._exported_once = True
 
     def _recent_alerts(self, limit: int = 10) -> List[Dict[str, Any]]:
         alerts = self.ranger.alert_history[-limit:]

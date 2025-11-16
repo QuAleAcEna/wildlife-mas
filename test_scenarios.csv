@@ -1,0 +1,4 @@
+scenario,description,ticks,poachers_spawned,threat_detection_rate,mean_response_time,coverage_rate,energy_per_threat,task_allocation_efficiency,herds_spawned,herd_safety_pct
+patrol_only,Baseline patrol without poachers (coverage + energy metrics).,240,0,0.0,0.0,100.0,0.0,0.0,0,100.0
+single_poacher,One poacher at a time; validates detection and response latency.,240,18,100.0,4.06,100.0,4.06,33.33,0,100.0
+stress_mixed,Multiple poachers + herds competing for limited coverage.,240,34,97.06,5.88,100.0,5.88,33.33,4,100.0

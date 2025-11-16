@@ -156,6 +156,13 @@ async def main(args: Any = None) -> None:
         output_path=output_path,
         interval=1.0,
     )
+    setattr(reserve, "dashboard_writer", writer)
+    ranger.metrics_writer = writer
+    reports_dir = Path(__file__).with_name("reports")
+    writer.register_export_paths(
+        reports_dir / "dashboard_history.json",
+        reports_dir / "dashboard_metrics.csv",
+    )
     writer_task = asyncio.create_task(writer.run(), name="DashboardStateWriter")
 
     print("Agents + dashboard writer running. Preparing dashboard web server…")
@@ -201,6 +208,12 @@ async def main(args: Any = None) -> None:
         if http_server:
             http_server.shutdown()
             http_server.server_close()
+        try:
+            writer.export_history(reports_dir / "dashboard_history.json")
+            writer.export_kpis_csv(reports_dir / "dashboard_metrics.csv")
+            print(f"Dashboard metrics exported to {reports_dir}")
+        except Exception as exc:
+            logging.warning("Could not export dashboard metrics: %s", exc)
 
 
 if __name__ == "__main__":
