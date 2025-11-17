@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -69,8 +70,17 @@ class Reserve:
 
     def __post_init__(self) -> None:
         if self.no_fly is None:
-            # Mark a simple 4x4 square as no-fly
-            self.no_fly = [(x, y) for x in range(8, 12) for y in range(8, 12)]
+            seed = time.time_ns()
+            rng = random.Random(seed)
+            block_width = min(4, self.width)
+            block_height = min(4, self.height)
+            start_x = rng.randint(0, self.width - block_width)
+            start_y = rng.randint(0, self.height - block_height)
+            self.no_fly = [
+                (start_x + dx, start_y + dy)
+                for dx in range(block_width)
+                for dy in range(block_height)
+            ]
 
     def random_cell(self) -> Tuple[int, int]:
         return (random.randint(0, self.width - 1), random.randint(0, self.height - 1))

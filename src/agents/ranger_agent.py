@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -46,6 +47,7 @@ class RangerAgent(Agent):
         self.fuel_per_step: float = 1.0
         self.fuel_level: float = self.max_fuel
         self._fuel_return_margin_steps: int = 5
+        self.travel_time_per_step_s: float = 1.0
 
         # NOVO #
         # Métricas simples de categoria de alertas e despachos
@@ -146,6 +148,7 @@ class RangerAgent(Agent):
         if path:
             route_str = " -> ".join(f"({x},{y})" for x, y in path)
             self.log("Ranger route", route_str)
+            await self._travel_path(path)
             self.log(
                 "Ranger arrived at alert",
                 alert_id,
@@ -412,6 +415,17 @@ class RangerAgent(Agent):
 
     def _update_field_position(self, new_position: Tuple[int, int]) -> None:
         self._current_position = new_position
+
+    async def _travel_path(self, path: List[Tuple[int, int]]) -> None:
+        if len(path) <= 1:
+            return
+        if self.dispatch_delay_s > 0:
+            self.log("Preparing to depart in", f"{self.dispatch_delay_s:.1f}s")
+            await asyncio.sleep(self.dispatch_delay_s)
+        for step, waypoint in enumerate(path[1:], start=1):
+            await asyncio.sleep(self.travel_time_per_step_s)
+            self._update_field_position(waypoint)
+            self.log("Ranger step", step, "->", waypoint)
 
     def _manhattan_distance(
         self, start: Tuple[int, int], target: Tuple[int, int]
