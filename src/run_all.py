@@ -8,7 +8,7 @@ import spade
 from dotenv import load_dotenv
 
 from agents.drone_agent import DroneAgent
-from agents.sensor_agent import SensorAgent
+from agents.sensor_agent import SensorAgent, plan_sensor_grid
 from agents.ranger_agent import RangerAgent
 from core.env import EnvironmentClock, Reserve
 # NOVO #
@@ -136,7 +136,19 @@ async def main(args: Any = None) -> None:
             callsign=callsigns[idx % len(callsigns)],
         )
         drones.append(drone)
-    sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
+    sensors = []
+    placements = plan_sensor_grid(reserve)
+    for idx, (position, bounds) in enumerate(placements):
+        sensor_jid = _with_resource(SENSOR_JID, f"sensor{idx + 1}")
+        sensor = SensorAgent(
+            sensor_jid,
+            SENSOR_PASS,
+            reserve,
+            target_drone=DRONE_JID,
+            position=position,
+            coverage_bounds=bounds,
+        )
+        sensors.append(sensor)
 
     # NOVO #
     # Registar os drones no Ranger para que ele possa lançar o CNP.
@@ -161,7 +173,8 @@ async def main(args: Any = None) -> None:
     await ranger.start(auto_register=True)
     for drone in drones:
         await drone.start(auto_register=True)
-    await sensor.start(auto_register=True)
+    for sensor in sensors:
+        await sensor.start(auto_register=True)
     # NOVO #
     for tracker in trackers:
         await tracker.start(auto_register=True)
@@ -184,7 +197,8 @@ async def main(args: Any = None) -> None:
             except asyncio.CancelledError:
                 pass
         # NOVO #
-        await sensor.stop()
+        for sensor in sensors:
+            await sensor.stop()
         for drone in drones:
             await drone.stop()
         # NOVO #

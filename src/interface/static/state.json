@@ -1,78 +1,78 @@
 {
-  "generated_at": "2025-11-17T16:59:01.515034Z",
+  "generated_at": "2025-11-17T17:22:30.503880Z",
   "clock": {
     "day": 1,
-    "hour": 8,
+    "hour": 12,
     "seconds_per_hour": 10.0,
-    "total_hours_elapsed": 0
+    "total_hours_elapsed": 4
   },
   "reserve": {
     "width": 20,
     "height": 20,
     "no_fly": [
       [
-        13,
-        6
+        7,
+        13
       ],
       [
-        13,
-        7
+        7,
+        14
       ],
       [
-        13,
-        8
+        7,
+        15
       ],
       [
-        13,
-        9
+        7,
+        16
       ],
       [
-        14,
-        6
+        8,
+        13
       ],
       [
-        14,
-        7
+        8,
+        14
       ],
       [
-        14,
-        8
+        8,
+        15
       ],
       [
-        14,
-        9
+        8,
+        16
       ],
       [
-        15,
-        6
+        9,
+        13
       ],
       [
-        15,
-        7
+        9,
+        14
       ],
       [
-        15,
-        8
+        9,
+        15
       ],
       [
-        15,
-        9
+        9,
+        16
       ],
       [
-        16,
-        6
+        10,
+        13
       ],
       [
-        16,
-        7
+        10,
+        14
       ],
       [
-        16,
-        8
+        10,
+        15
       ],
       [
-        16,
-        9
+        10,
+        16
       ]
     ]
   },
@@ -81,13 +81,13 @@
       "jid": "ranger@localhost",
       "position": [
         0,
-        0
+        3
       ],
       "base": [
         0,
         0
       ],
-      "fuel_level": 200.0,
+      "fuel_level": 197.0,
       "max_fuel": 200.0
     },
     "drones": [
@@ -96,7 +96,7 @@
         "callsign": "1",
         "position": [
           1,
-          1
+          9
         ],
         "base": [
           0,
@@ -109,7 +109,7 @@
           19
         ],
         "status": "patrolling",
-        "battery_pct": 98.0,
+        "battery_pct": 90.0,
         "incident_queue": 0,
         "active_incident": null
       },
@@ -117,8 +117,8 @@
         "jid": "drone@localhost/drone2",
         "callsign": "2",
         "position": [
-          8,
-          0
+          9,
+          7
         ],
         "base": [
           6,
@@ -131,7 +131,7 @@
           19
         ],
         "status": "patrolling",
-        "battery_pct": 98.0,
+        "battery_pct": 90.0,
         "incident_queue": 0,
         "active_incident": null
       },
@@ -139,8 +139,8 @@
         "jid": "drone@localhost/drone3",
         "callsign": "3",
         "position": [
-          13,
-          0
+          18,
+          4
         ],
         "base": [
           12,
@@ -152,27 +152,140 @@
           19,
           19
         ],
-        "status": "responding",
-        "battery_pct": 99.0,
+        "status": "patrolling",
+        "battery_pct": 90.0,
         "incident_queue": 0,
-        "active_incident": {
-          "id": "sensor@localhost-270f5e6500d74ba688c04bd76d8cdf5a",
-          "pos": [
-            16,
-            16
-          ],
-          "category": "poacher"
-        }
+        "active_incident": null
       }
     ],
     "sensors": [
       {
-        "jid": "sensor@localhost",
+        "jid": "sensor@localhost/sensor1",
         "position": [
-          16,
+          2,
+          2
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor2",
+        "position": [
+          7,
+          2
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor3",
+        "position": [
+          12,
+          2
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor4",
+        "position": [
+          17,
+          2
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor5",
+        "position": [
+          2,
+          7
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor6",
+        "position": [
+          7,
+          7
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor7",
+        "position": [
+          12,
+          7
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor8",
+        "position": [
+          17,
+          7
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor9",
+        "position": [
+          2,
           12
         ],
-        "radius": 5
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor10",
+        "position": [
+          7,
+          12
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor11",
+        "position": [
+          12,
+          12
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor12",
+        "position": [
+          17,
+          12
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor13",
+        "position": [
+          2,
+          17
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor14",
+        "position": [
+          7,
+          17
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor15",
+        "position": [
+          12,
+          17
+        ],
+        "radius": 4
+      },
+      {
+        "jid": "sensor@localhost/sensor16",
+        "position": [
+          17,
+          17
+        ],
+        "radius": 4
       }
     ],
     "trackers": [
@@ -180,24 +293,24 @@
         "jid": "drone@localhost/tracker1",
         "animal_id": "drone@localhost/tracker1",
         "position": [
-          8,
-          8
+          5,
+          13
         ],
         "goal": [
-          19,
-          8
+          10,
+          6
         ]
       },
       {
         "jid": "drone@localhost/tracker2",
         "animal_id": "drone@localhost/tracker2",
         "position": [
-          1,
-          1
+          11,
+          17
         ],
         "goal": [
-          1,
-          8
+          5,
+          17
         ]
       }
     ]
@@ -205,25 +318,209 @@
   "events": {
     "poachers": [
       {
-        "id": "poacher-f2e4c831",
+        "id": "poacher-d8db42ec",
         "position": [
-          13,
-          14
+          9,
+          10
+        ],
+        "active": true
+      },
+      {
+        "id": "poacher-fdad5fba",
+        "position": [
+          9,
+          9
         ],
         "active": true
       }
     ],
-    "herds": []
+    "herds": [
+      {
+        "id": "herd-124e4f9b",
+        "center": [
+          4,
+          2
+        ],
+        "size": 9,
+        "goal": null,
+        "active": true
+      },
+      {
+        "id": "herd-668b6e13",
+        "center": [
+          2,
+          2
+        ],
+        "size": 12,
+        "goal": null,
+        "active": true
+      },
+      {
+        "id": "herd-3f85f61c",
+        "center": [
+          16,
+          0
+        ],
+        "size": 11,
+        "goal": null,
+        "active": true
+      },
+      {
+        "id": "herd-1a8e6769",
+        "center": [
+          4,
+          10
+        ],
+        "size": 9,
+        "goal": [
+          1,
+          7
+        ],
+        "active": true
+      }
+    ]
   },
   "alerts": {
     "recent": [
       {
-        "id": "sensor@localhost-270f5e6500d74ba688c04bd76d8cdf5a",
-        "sensor": "sensor@localhost",
+        "id": "sensor@localhost/sensor1-6573db24fa674274afd482ecedecd3d9",
+        "sensor": "sensor@localhost/sensor1",
         "category": null,
         "pos": [
-          16,
-          16
+          0,
+          2
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-6573db24fa674274afd482ecedecd3d9",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          2
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-bbe52b8d26114977b9e7a0603accb52a",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          2
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-bbe52b8d26114977b9e7a0603accb52a",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          2
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-bbe52b8d26114977b9e7a0603accb52a",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          2
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-91f294884beb4ce18dc11253c389e357",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          3
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-91f294884beb4ce18dc11253c389e357",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          3
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-91f294884beb4ce18dc11253c389e357",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          3
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-72f5beeb449f4c9fb0961f37881689fd",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          3
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-72f5beeb449f4c9fb0961f37881689fd",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          3
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-72f5beeb449f4c9fb0961f37881689fd",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          3
+        ],
+        "confidence": null,
+        "timestamp": null,
+        "sensor_pos": null
+      },
+      {
+        "id": "sensor@localhost/sensor1-e7b9bf8bfe1a40f1a4b33c1e92ebf49e",
+        "sensor": "sensor@localhost/sensor1",
+        "category": null,
+        "pos": [
+          0,
+          4
         ],
         "confidence": null,
         "timestamp": null,
@@ -233,32 +530,32 @@
     "cnp_pending": []
   },
   "metrics": {
-    "alerts_total": 1,
-    "dispatch_total": 0,
+    "alerts_total": 39,
+    "dispatch_total": 12,
     "alert_breakdown": {
-      "poacher": 1,
-      "herd": 0,
-      "unknown": 0
+      "poacher": 0,
+      "herd": 28,
+      "unknown": 11
     },
     "dispatch_breakdown": {
       "poacher": 0,
-      "herd": 0,
+      "herd": 12,
       "unknown": 0
     },
     "cnp_active": 0,
     "drones_total": 3,
-    "sensors_total": 1,
+    "sensors_total": 16,
     "trackers_total": 2,
-    "poachers_active": 1,
-    "herds_active": 0
+    "poachers_active": 2,
+    "herds_active": 4
   },
   "kpis": {
-    "alerts_total": 1,
-    "dispatch_total": 0,
-    "mean_response_steps": 0.0,
-    "avg_drone_battery_pct": 98.33,
-    "ranger_fuel": 200.0,
-    "energy_per_threat": 0.0,
-    "coverage_rate": 1.5
+    "alerts_total": 39,
+    "dispatch_total": 12,
+    "mean_response_steps": 0.25,
+    "avg_drone_battery_pct": 90.0,
+    "ranger_fuel": 197.0,
+    "energy_per_threat": 0.25,
+    "coverage_rate": 7.75
   }
 }

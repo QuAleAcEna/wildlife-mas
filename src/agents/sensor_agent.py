@@ -1,6 +1,7 @@
 import random
 import time
 import uuid
+from typing import List, Optional, Tuple
 
 from spade import agent
 from spade.behaviour import PeriodicBehaviour
@@ -10,28 +11,86 @@ from core.messages import make_inform_alert
 
 # NOVO #
 # Parâmetros simples de deteção dos sensores
-SENSOR_DETECTION_RADIUS = 5          # em células
-SENSOR_MIN_DET_PROB = 0.2            # probabilidade mínima de deteção
-SENSOR_POACHER_BASE_DET = 0.9        # base para caçadores
-SENSOR_HERD_BASE_DET = 0.7           # base para bandos
-SENSOR_FALLBACK_RANDOM_PROB = 0.03   # prob. de alerta aleatório quando nada é visto
+SENSOR_COVERAGE_SIZE = 5              # sensores cobrem blocos 5x5
+SENSOR_MIN_DET_PROB = 0.2             # probabilidade mínima de deteção
+SENSOR_POACHER_BASE_DET = 0.9         # base para caçadores
+SENSOR_HERD_BASE_DET = 0.7            # base para bandos
+SENSOR_FALLBACK_RANDOM_PROB = 0.03    # prob. de alerta aleatório quando nada é visto
 # NOVO #
+
+
+def plan_sensor_grid(reserve: Reserve, coverage_size: int = SENSOR_COVERAGE_SIZE) -> List[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
+    """
+    Gera posições/limites para sensores de forma a cobrir toda a reserva com blocos coverage_size x coverage_size.
+    Retorna lista de tuplos (posição, bounds).
+    """
+    placements: List[Tuple[Tuple[int, int], Tuple[int, int, int, int]]] = []
+    width, height = reserve.width, reserve.height
+    for y_min in range(0, height, coverage_size):
+        y_max = min(y_min + coverage_size - 1, height - 1)
+        for x_min in range(0, width, coverage_size):
+            x_max = min(x_min + coverage_size - 1, width - 1)
+            cx = (x_min + x_max) // 2
+            cy = (y_min + y_max) // 2
+            placements.append(((cx, cy), (x_min, y_min, x_max, y_max)))
+    return placements
+
+
+def _distance_factor(distance: float, detection_radius: int) -> float:
+    """
+    Fatoriza o impacto da distância na deteção.
+    Ao estar mais perto (distância 0) devolve 1; ao atingir o limite, aproxima-se de 0.
+    Usa uma curva quadrática suave para favorecer observações muito próximas.
+    """
+    if detection_radius <= 0:
+        return 1.0
+    closeness = max(0.0, 1.0 - (distance / (detection_radius + 1)))
+    return closeness * closeness
 
 
 class SensorAgent(agent.Agent):
     """Simulated sensor that periodically raises anomalies to a target drone."""
 
-    def __init__(self, jid: str, password: str, reserve: Reserve, target_drone: str):
+    def __init__(
+        self,
+        jid: str,
+        password: str,
+        reserve: Reserve,
+        target_drone: str,
+        position: Optional[Tuple[int, int]] = None,
+        coverage_bounds: Optional[Tuple[int, int, int, int]] = None,
+    ):
         """Store references to the reserve map and the drone that handles alerts."""
         super().__init__(jid, password)
         self.reserve = reserve
         self.target_drone = target_drone
         # NOVO #
         # Cada sensor fica fixo numa célula do mapa (simula um sensor físico no terreno).
-        self.position = self.reserve.random_cell()
-        # Raio de deteção configurável
-        self.detection_radius = SENSOR_DETECTION_RADIUS
+        self.position = position or self.reserve.random_cell()
+        self.coverage_bounds = coverage_bounds
+        self.detection_radius = self._compute_detection_radius()
         # NOVO #
+
+    def _compute_detection_radius(self) -> int:
+        if not self.coverage_bounds:
+            return SENSOR_COVERAGE_SIZE
+        x_min, y_min, x_max, y_max = self.coverage_bounds
+        corners = [
+            (x_min, y_min),
+            (x_min, y_max),
+            (x_max, y_min),
+            (x_max, y_max),
+        ]
+        cx, cy = self.position
+        radius = max(abs(cx - x) + abs(cy - y) for x, y in corners)
+        return max(1, radius)
+
+    def _in_coverage(self, cell: Tuple[int, int]) -> bool:
+        if not self.coverage_bounds:
+            return True
+        x_min, y_min, x_max, y_max = self.coverage_bounds
+        x, y = cell
+        return x_min <= x <= x_max and y_min <= y <= y_max
 
     class SenseAndAlert(PeriodicBehaviour):  # sending alerts at random times, change to be based on movement, sound, etc
         """Periodic behaviour that probabilistically emits anomaly alerts."""
@@ -52,6 +111,8 @@ class SensorAgent(agent.Agent):
                 candidates = []
                 for kind in ("poacher", "herd"):
                     for pos, dist, ent in nearby.get(kind, []):
+                        if not self.agent._in_coverage(pos):
+                            continue
                         candidates.append((kind, pos, dist))
 
                 if candidates:
@@ -64,39 +125,40 @@ class SensorAgent(agent.Agent):
                     else:
                         base = SENSOR_HERD_BASE_DET
 
-                    # Probabilidade decresce com a distância, mas nunca abaixo do mínimo
-                    prob = max(
-                        SENSOR_MIN_DET_PROB,
-                        base * (1.0 - (dist / max_r)),
+                    # Probabilidade agora é sempre 1 dentro do raio; apenas confiança varia
+                    distance_factor = _distance_factor(dist, max_r)
+                    confidence = base * distance_factor
+                    confidence = round(max(0.0, min(1.0, confidence)), 2)
+
+                    alert_id = f"{self.agent.jid}-{uuid.uuid4().hex}"
+                    payload = {
+                        "sensor": str(self.agent.jid),
+                        "id": alert_id,
+                        "pos": pos,
+                        "confidence": confidence,
+                        "ts": self.current_time(),
+                        "category": category,              # "poacher" | "herd"
+                        "distance_cells": dist,
+                        "distance_m": dist * 100.0,        # simples escala p/ o drone usar se quiser
+                        "sensor_pos": self.agent.position,
+                    }
+                    msg = make_inform_alert(self.agent.target_drone, payload)
+                    await self.send(msg)
+                    self.agent.log(
+                        f"ALERT ({category}) -> {self.agent.target_drone} :: {payload}"
                     )
-
-                    if random.random() < prob:
-                        alert_id = f"{self.agent.jid}-{uuid.uuid4().hex}"
-                        # Confiança também decresce com a distância
-                        confidence = 0.5 + 0.5 * (1.0 - dist / max_r)
-                        confidence = round(max(0.0, min(1.0, confidence)), 2)
-
-                        payload = {
-                            "sensor": str(self.agent.jid),
-                            "id": alert_id,
-                            "pos": pos,
-                            "confidence": confidence,
-                            "ts": self.current_time(),
-                            "category": category,              # "poacher" | "herd"
-                            "distance_cells": dist,
-                            "distance_m": dist * 100.0,        # simples escala p/ o drone usar se quiser
-                            "sensor_pos": self.agent.position,
-                        }
-                        msg = make_inform_alert(self.agent.target_drone, payload)
-                        await self.send(msg)
-                        self.agent.log(
-                            f"ALERT ({category}) -> {self.agent.target_drone} :: {payload}"
-                        )
-                        return  # só um alerta por tick
+                    return  # só um alerta por tick
 
             # Se não houver motor de eventos ou nada perto → fallback aleatório (mantém demo viva)
             if random.random() < SENSOR_FALLBACK_RANDOM_PROB:
-                cell = self.agent.reserve.random_cell()
+                if self.agent.coverage_bounds:
+                    x_min, y_min, x_max, y_max = self.agent.coverage_bounds
+                    cell = (
+                        random.randint(x_min, x_max),
+                        random.randint(y_min, y_max),
+                    )
+                else:
+                    cell = self.agent.reserve.random_cell()
                 alert_id = f"{self.agent.jid}-{uuid.uuid4().hex}"
                 payload = {
                     "sensor": str(self.agent.jid),

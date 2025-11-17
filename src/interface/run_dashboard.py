@@ -12,7 +12,7 @@ import spade
 from agents.animaltracker_agent import AnimalTrackerAgent
 from agents.drone_agent import DroneAgent
 from agents.ranger_agent import RangerAgent
-from agents.sensor_agent import SensorAgent
+from agents.sensor_agent import SensorAgent, plan_sensor_grid
 from core.env import EnvironmentClock, Reserve
 from core.events import EventConfig, WorldEventEngine
 
@@ -122,7 +122,19 @@ async def main(args: Any = None) -> None:
         )
         drones.append(drone)
 
-    sensor = SensorAgent(SENSOR_JID, SENSOR_PASS, reserve, target_drone=DRONE_JID)
+    sensors: List[SensorAgent] = []
+    placements = plan_sensor_grid(reserve)
+    for idx, (position, bounds) in enumerate(placements):
+        sensor_jid = _with_resource(SENSOR_JID, f"sensor{idx + 1}")
+        sensor = SensorAgent(
+            sensor_jid,
+            SENSOR_PASS,
+            reserve,
+            target_drone=DRONE_JID,
+            position=position,
+            coverage_bounds=bounds,
+        )
+        sensors.append(sensor)
 
     trackers: List[AnimalTrackerAgent] = []
     tracker_count = 2
@@ -141,7 +153,8 @@ async def main(args: Any = None) -> None:
     await ranger.start(auto_register=True)
     for drone in drones:
         await drone.start(auto_register=True)
-    await sensor.start(auto_register=True)
+    for sensor in sensors:
+        await sensor.start(auto_register=True)
     for tracker in trackers:
         await tracker.start(auto_register=True)
 
@@ -151,7 +164,7 @@ async def main(args: Any = None) -> None:
         events=events,
         ranger=ranger,
         drones=drones,
-        sensors=[sensor],
+        sensors=sensors,
         trackers=trackers,
         output_path=output_path,
         interval=1.0,
@@ -199,7 +212,8 @@ async def main(args: Any = None) -> None:
                 await event_task
             except asyncio.CancelledError:
                 pass
-        await sensor.stop()
+        for sensor in sensors:
+            await sensor.stop()
         for drone in drones:
             await drone.stop()
         for tracker in trackers:
