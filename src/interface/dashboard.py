@@ -290,15 +290,25 @@ class DashboardStateWriter:
 
     def _slim_alert(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         payload = alert.copy()
-        category = payload.get("category")
-        sensor_pos = payload.get("sensor_pos") or payload.get("sensor_position")
+        alert_block = payload.get("alert")
+        if not isinstance(alert_block, dict):
+            alert_block = {}
+        category = payload.get("category") or alert_block.get("category") or "unknown"
+        sensor_pos = (
+            payload.get("sensor_pos")
+            or payload.get("sensor_position")
+            or alert_block.get("sensor_pos")
+        )
         return {
-            "id": payload.get("id") or payload.get("alert", {}).get("id"),
+            "id": payload.get("id") or alert_block.get("id"),
             "sensor": payload.get("sensor"),
             "category": category,
-            "pos": payload.get("pos") or payload.get("alert", {}).get("pos"),
-            "confidence": payload.get("confidence"),
-            "timestamp": payload.get("ts") or payload.get("timestamp"),
+            "pos": payload.get("pos") or alert_block.get("pos"),
+            "confidence": payload.get("confidence") or alert_block.get("confidence"),
+            "timestamp": payload.get("ts")
+            or payload.get("timestamp")
+            or alert_block.get("ts")
+            or alert_block.get("timestamp"),
             "sensor_pos": sensor_pos,
         }
 
