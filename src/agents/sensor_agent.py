@@ -59,11 +59,13 @@ class SensorAgent(agent.Agent):
         target_drone: str,
         position: Optional[Tuple[int, int]] = None,
         coverage_bounds: Optional[Tuple[int, int, int, int]] = None,
+        target_ranger: Optional[str] = None,
     ):
         """Store references to the reserve map and the drone that handles alerts."""
         super().__init__(jid, password)
         self.reserve = reserve
         self.target_drone = target_drone
+        self.target_ranger = target_ranger
         # NOVO #
         # Cada sensor fica fixo numa célula do mapa (simula um sensor físico no terreno).
         self.position = position or self.reserve.random_cell()
@@ -142,39 +144,22 @@ class SensorAgent(agent.Agent):
                         "distance_m": dist * 100.0,        # simples escala p/ o drone usar se quiser
                         "sensor_pos": self.agent.position,
                     }
-                    msg = make_inform_alert(self.agent.target_drone, payload)
+                    recipient = self.agent.target_drone
+                    route = "drone"
+                    if (
+                        category == "poacher"
+                        and confidence >= 0.7
+                        and self.agent.target_ranger
+                    ):
+                        recipient = self.agent.target_ranger
+                        route = "ranger"
+                    msg = make_inform_alert(recipient, payload)
                     await self.send(msg)
                     self.agent.log(
-                        f"ALERT ({category}) -> {self.agent.target_drone} :: {payload}"
+                        f"ALERT ({category}) -> {route} :: {payload}"
                     )
                     return  # só um alerta por tick
 
-            # Se não houver motor de eventos ou nada perto → fallback aleatório (mantém demo viva)
-            if random.random() < SENSOR_FALLBACK_RANDOM_PROB:
-                if self.agent.coverage_bounds:
-                    x_min, y_min, x_max, y_max = self.agent.coverage_bounds
-                    cell = (
-                        random.randint(x_min, x_max),
-                        random.randint(y_min, y_max),
-                    )
-                else:
-                    cell = self.agent.reserve.random_cell()
-                alert_id = f"{self.agent.jid}-{uuid.uuid4().hex}"
-                payload = {
-                    "sensor": str(self.agent.jid),
-                    "id": alert_id,
-                    "pos": cell,
-                    "confidence": round(random.uniform(0.6, 0.95), 2),
-                    "ts": self.current_time(),
-                    "category": "unknown",
-                    "sensor_pos": self.agent.position,
-                }
-                msg = make_inform_alert(self.agent.target_drone, payload)
-                await self.send(msg)
-                self.agent.log(
-                    f"ALERT (fallback) -> {self.agent.target_drone} :: {payload}"
-                )
-            # NOVO #
 
         def current_time(self):
             """Expose a small wrapper so behaviour remains test-friendly."""

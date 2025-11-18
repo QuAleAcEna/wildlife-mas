@@ -25,6 +25,7 @@ from core.messages import (
     ACCEPT,
     REJECT,
     CNP_ALERT,
+    DIRECT_ALERT,
     # NOVO #
     json_dumps,
     json_loads,
@@ -104,7 +105,11 @@ class DroneAgent(Agent):
         self._incident_path: Deque[Tuple[int, int]] = deque()
         # Incidente atualmente em resolução
         self._active_incident: Optional[Dict[str, Any]] = None
+        # Caminho para regressar ao setor após incidente
+        self._rejoin_path: Deque[Tuple[int, int]] = deque()
         # NOVO #
+        self._global_walkable: Set[Tuple[int, int]] = self._compute_global_walkable()
+        self._observed_events: Set[str] = set()
 
     async def setup(self) -> None:
         """Start behaviours for relaying alerts and patrolling the reserve."""
@@ -131,6 +136,11 @@ class DroneAgent(Agent):
         self.add_behaviour(cnp_decision, decision_template)
         # NOVO #
 
+        direct_behaviour = self.DirectAssignmentBehaviour(self)
+        direct_template = Template()
+        direct_template.set_metadata("type", DIRECT_ALERT)
+        self.add_behaviour(direct_behaviour, direct_template)
+
         # Patrulha periódica
         self.add_behaviour(
             self.PatrolBehaviour(self, period=self.patrol_period_s)
@@ -152,8 +162,16 @@ class DroneAgent(Agent):
         # NOVO #
 
         ack_payload = self._build_ack_payload(sensor, payload)
-        attachments = await self._collect_attachments(payload)
         await self._reply_to_sensor(behaviour, sensor, ack_payload)
+        if not self._confirm_sensor_alert(payload):
+            self.log(
+                "Alert dismissed (no threat confirmed)",
+                payload.get("id"),
+                payload.get("pos"),
+            )
+            return
+
+        attachments = await self._collect_attachments(payload)
         await self._notify_ranger(
             behaviour, sensor, payload, ack_payload, attachments
         )
@@ -340,6 +358,17 @@ class DroneAgent(Agent):
                 out.append((nx, ny))
         return out
 
+    def _compute_global_walkable(self) -> Set[Tuple[int, int]]:
+        cells: Set[Tuple[int, int]] = {
+            (x, y)
+            for y in range(self.reserve.height)
+            for x in range(self.reserve.width)
+            if not self.reserve.is_no_fly((x, y))
+        }
+        if not cells:
+            cells.add(self.base_position)
+        return cells
+
     def _next_waypoint(self) -> Tuple[int, int]:
         if not self._patrol_route:
             return (0, 0)
@@ -351,13 +380,22 @@ class DroneAgent(Agent):
     # ---------------------------------------------------------------
 
     def _estimate_energy_cost(
-        self, start: Tuple[int, int], goal: Tuple[int, int]
+        self,
+        start: Tuple[int, int],
+        goal: Tuple[int, int],
+        walkable: Optional[Set[Tuple[int, int]]] = None,
     ) -> float:
         if start == goal:
             return 0.0
 
-        walkable = self._walkable_cells or {start}
-        path = self._shortest_path(start, goal, walkable)
+        base_walkable = walkable or (self._walkable_cells and set(self._walkable_cells)) or {start}
+        if (
+            (start not in base_walkable or goal not in base_walkable)
+            and self._global_walkable
+        ):
+            base_walkable = self._global_walkable
+
+        path = self._shortest_path(start, goal, base_walkable)
         if not path:
             return float("inf")
 
@@ -366,11 +404,14 @@ class DroneAgent(Agent):
 
     # NOVO #
     def _battery_required_for_round_trip(
-        self, start: Tuple[int, int], target: Tuple[int, int]
+        self,
+        start: Tuple[int, int],
+        target: Tuple[int, int],
+        walkable: Optional[Set[Tuple[int, int]]] = None,
     ) -> float:
         """Energia para ir e voltar ao ponto base."""
-        to_target = self._estimate_energy_cost(start, target)
-        back_home = self._estimate_energy_cost(target, self.base_position)
+        to_target = self._estimate_energy_cost(start, target, walkable)
+        back_home = self._estimate_energy_cost(target, self.base_position, walkable)
         if to_target == float("inf") or back_home == float("inf"):
             return float("inf")
         return to_target + back_home
@@ -419,7 +460,13 @@ class DroneAgent(Agent):
         return self.battery_level <= threshold
 
     def _begin_return_to_base(self) -> None:
-        walkable = self._walkable_cells or {self.position}
+        walkable: Optional[Set[Tuple[int, int]]] = self._walkable_cells
+        if (
+            not walkable
+            or self.position not in walkable
+            or self.base_position not in walkable
+        ):
+            walkable = self._global_walkable or walkable or {self.position}
         path = self._shortest_path(self.position, self.base_position, walkable)
         if not path:
             self.log("Unable to compute return to base.")
@@ -507,7 +554,12 @@ class DroneAgent(Agent):
         except (TypeError, ValueError):
             return
 
-        incident = {"id": incident_id, "pos": target, "category": category}
+        incident = {
+            "id": incident_id,
+            "pos": target,
+            "category": category,
+            "follow": bool(payload.get("follow")),
+        }
 
         # Prioridade: poacher vai para o início
         if category == "poacher":
@@ -532,7 +584,11 @@ class DroneAgent(Agent):
         while self._incident_queue:
             incident = self._incident_queue.popleft()
             target = incident["pos"]
-            required = self._battery_required_for_round_trip(self.position, target)
+            required = self._battery_required_for_round_trip(
+                self.position,
+                target,
+                walkable=self._global_walkable,
+            )
 
             if required == float("inf"):
                 self.log("Skipping unreachable incident", incident["id"])
@@ -541,7 +597,7 @@ class DroneAgent(Agent):
                 self.log("Skipping low battery incident", incident["id"])
                 continue
 
-            walkable = self._walkable_cells or {self.position}
+            walkable = self._global_walkable or self._walkable_cells or {self.position}
             path = self._shortest_path(self.position, target, walkable)
             if not path or len(path) <= 1:
                 self.log("No path to incident", incident["id"])
@@ -563,6 +619,69 @@ class DroneAgent(Agent):
         self._incident_path.clear()
     # NOVO #
 
+    def _schedule_rejoin_patrol(self) -> None:
+        """Planeia percurso de regresso ao setor/base após incidente."""
+        walkable = self._global_walkable or self._walkable_cells or {self.position}
+        path = self._shortest_path(self.position, self.base_position, walkable)
+        if not path or len(path) <= 1:
+            self._rejoin_path.clear()
+            if self.position != self.base_position:
+                self.position = self.base_position
+            self._route_index = -1
+            return
+        self._rejoin_path = deque(path[1:])
+        self.log(
+            "Returning to patrol sector via",
+            len(self._rejoin_path),
+            "steps.",
+        )
+
+    def _cancel_incident(self, alert_id: Optional[str]) -> None:
+        if not alert_id:
+            return
+        self._incident_queue = deque(
+            incident for incident in self._incident_queue if incident.get("id") != alert_id
+        )
+        if self._active_incident and self._active_incident.get("id") == alert_id:
+            self.log("Cancelling active incident", alert_id)
+            self._active_incident = None
+            self._incident_path.clear()
+            self._schedule_rejoin_patrol()
+
+    def _refresh_follow_target(self) -> None:
+        incident = self._active_incident
+        if not incident or not incident.get("follow"):
+            return
+        engine = getattr(self.reserve, "events", None)
+        if engine is None:
+            return
+        desired_category = incident.get("category", "poacher")
+        current_target = incident.get("pos") or self.position
+        nearby = engine.nearby_entities(
+            tuple(current_target),
+            radius=3,
+            kinds=(desired_category,),
+        )
+        candidates = nearby.get(desired_category, [])
+        if not candidates:
+            return
+        pos, _, entity = min(candidates, key=lambda item: item[1])
+        new_target = (int(pos[0]), int(pos[1]))
+        if incident.get("pos") != new_target:
+            incident["pos"] = new_target
+            incident["entity_id"] = getattr(entity, "id", None)
+            self._recompute_follow_path(new_target)
+        elif not self._incident_path:
+            self._recompute_follow_path(new_target)
+
+    def _recompute_follow_path(self, target: Tuple[int, int]) -> None:
+        walkable = self._global_walkable or self._walkable_cells or {self.position}
+        path = self._shortest_path(self.position, target, walkable)
+        if path and len(path) > 1:
+            self._incident_path = deque(path[1:])
+        else:
+            self._incident_path.clear()
+
     # ---------------------------------------------------------------
     #   PATROL LOOP
     # ---------------------------------------------------------------
@@ -582,7 +701,29 @@ class DroneAgent(Agent):
         elif self.is_returning_to_base:
             self._advance_return_path(previous)
 
-        # 3) Modo incidente ativo
+        # 3) Seguimento direto de incidente (follow mode)
+        elif self._active_incident and self._active_incident.get("follow"):
+            self._refresh_follow_target()
+            if self._incident_path:
+                nxt = self._incident_path.popleft()
+                self.position = nxt
+                self._consume_battery_for_move(previous, nxt)
+                self.log(
+                    "Tracking incident",
+                    self._active_incident.get("id"),
+                    "→",
+                    self.position,
+                    f"{len(self._incident_path)} steps left",
+                )
+            else:
+                self.log(
+                    "Tracking incident",
+                    self._active_incident.get("id"),
+                    "holding position",
+                    self.position,
+                )
+
+        # 4) Modo incidente normal
         elif self._incident_path:
             nxt = self._incident_path.popleft()
             self.position = nxt
@@ -604,13 +745,30 @@ class DroneAgent(Agent):
                     "at",
                     self.position,
                 )
-                self._active_incident = None
+                if self._active_incident and not self._active_incident.get("follow"):
+                    self._active_incident = None
+                    self._schedule_rejoin_patrol()
 
-        # 4) Tentar apanhar incidente da fila
+        # 5) Caminho de regresso ao setor após incidente
+        elif self._rejoin_path:
+            nxt = self._rejoin_path.popleft()
+            self.position = nxt
+            self._consume_battery_for_move(previous, nxt)
+            self.log(
+                "Rejoining sector",
+                self.position,
+                f"{len(self._rejoin_path)} steps left",
+            )
+            if not self._rejoin_path:
+                self.log("Back at patrol base, resuming route.")
+                self._route_index = -1
+                self.position = self.base_position
+
+        # 6) Tentar apanhar incidente da fila
         elif self._incident_queue:
             self._plan_incident_path()
 
-        # 5) Patrulha normal
+        # 7) Patrulha normal
         else:
             nxt = self._next_waypoint()
             if previous == self.base_position and nxt != self.base_position:
@@ -627,6 +785,8 @@ class DroneAgent(Agent):
                 f"[{self._route_index + 1}/{len(self._patrol_route)}]",
             )
             await self._maybe_emit_patrol_alert(behaviour)
+
+        await self._scan_events_nearby(behaviour)
 
         # TELEMETRIA
         await self._broadcast_patrol_status(behaviour)
@@ -689,6 +849,34 @@ class DroneAgent(Agent):
         await behaviour.send(msg)
         self.log("Self alert:", alert_id, "at", payload["pos"])
 
+    async def _scan_events_nearby(self, behaviour: "DroneAgent.PatrolBehaviour") -> None:
+        engine = getattr(self.reserve, "events", None)
+        if engine is None:
+            return
+        nearby = engine.nearby_entities(
+            self.position,
+            radius=2,
+            kinds=("poacher", "herd"),
+        )
+        for category in ("poacher", "herd"):
+            for pos, _, entity in nearby.get(category, []):
+                entity_id = getattr(entity, "id", None) or f"{category}-{pos[0]}-{pos[1]}"
+                if entity_id in self._observed_events:
+                    continue
+                self._observed_events.add(entity_id)
+                payload = {
+                    "sensor": str(self.jid),
+                    "id": f"{self.jid}-visual-{entity_id}",
+                    "pos": list(pos),
+                    "confidence": 0.85,
+                    "ts": dt.datetime.utcnow().isoformat() + "Z",
+                    "category": category,
+                    "sensor_pos": self.position,
+                }
+                msg = make_inform_alert(self.ranger_jid, payload)
+                await behaviour.send(msg)
+                self.log("Visual alert", category, "at", pos)
+
     async def _collect_attachments(self, payload: Dict[str, Any]) -> Dict[str, str]:
         photo_task = asyncio.to_thread(self.photo_sampler, payload)
         ir_task = asyncio.to_thread(self.ir_sampler, payload)
@@ -698,6 +886,36 @@ class DroneAgent(Agent):
             "photo_base64": base64.b64encode(photo_bytes).decode(),
             "ir_base64": base64.b64encode(ir_bytes).decode(),
         }
+
+    def _confirm_sensor_alert(self, payload: Dict[str, Any]) -> bool:
+        """
+        Drone faz uma confirmação rápida usando o estado do motor de eventos
+        antes de escalar para o ranger.
+        """
+        engine = getattr(self.reserve, "events", None)
+        if engine is None:
+            return True
+
+        raw_pos = payload.get("pos")
+        if not isinstance(raw_pos, (list, tuple)) or len(raw_pos) != 2:
+            return False
+        try:
+            target = (int(raw_pos[0]), int(raw_pos[1]))
+        except (TypeError, ValueError):
+            return False
+
+        category = payload.get("category")
+        nearby = engine.nearby_entities(
+            target,
+            radius=2,
+            kinds=("poacher", "herd"),
+        )
+
+        if isinstance(category, str) and category in nearby:
+            if nearby[category]:
+                return True
+
+        return any(nearby_list for nearby_list in nearby.values())
 
     async def _reply_to_sensor(
         self,
@@ -788,7 +1006,9 @@ class DroneAgent(Agent):
                 return
 
             required = self.drone._battery_required_for_round_trip(
-                self.drone.position, target
+                self.drone.position,
+                target,
+                walkable=self.drone._global_walkable,
             )
             can_serve = (
                 required < float("inf") and required <= self.drone.battery_level
@@ -844,6 +1064,27 @@ class DroneAgent(Agent):
             elif perf == REJECT:
                 self.drone.log("REJECT:", payload)
     # NOVO #
+
+    class DirectAssignmentBehaviour(CyclicBehaviour):
+        """Recebe ordens diretas do Ranger para seguir uma ameaça."""
+
+        def __init__(self, drone: "DroneAgent"):
+            super().__init__()
+            self.drone = drone
+
+        async def run(self) -> None:
+            msg = await self.receive(timeout=0.5)
+            if not msg:
+                return
+            payload = self.drone._safe_load(msg.body)
+            action = payload.get("action", "follow")
+            if action == "follow":
+                payload["follow"] = True
+                self.drone._enqueue_incident(payload)
+                if not self.drone._incident_path and not self.drone._active_incident:
+                    self.drone._plan_incident_path()
+            elif action == "stand_down":
+                self.drone._cancel_incident(payload.get("alert_id"))
 
     # ---------------------------------------------------------------
     #   LOGGING

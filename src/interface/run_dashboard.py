@@ -30,7 +30,8 @@ from run_all import (
     RANGER_PASS,
     SENSOR_JID,
     SENSOR_PASS,
-    _pick_sector_base,
+    _patch_pyjabber_handle_user,
+    _patch_pyjabber_xml_protocol,
     _require_env_vars,
     _with_resource,
 )
@@ -95,21 +96,25 @@ async def main(args: Any = None) -> None:
     event_task = asyncio.create_task(_run_events(events), name="WorldEventEngine")
 
     ranger = RangerAgent(RANGER_JID, RANGER_PASS, clock=reserve.clock)
+    ranger.reserve = reserve
 
     # --- Drones setup (mirrors run_all.py) ---
-    drone_count = 3
-    callsigns = ["1", "2", "3"]
-    sector_width = max(1, reserve.width // drone_count)
+    drone_count = 4
+    callsigns = ["1", "2", "3", "4"]
+    half_w = max(1, reserve.width // 2)
+    half_h = max(1, reserve.height // 2)
+    sector_defs = [
+        ((0, 0), (0, 0, half_w - 1, half_h - 1)),
+        ((0, reserve.height - 1), (0, half_h, half_w - 1, reserve.height - 1)),
+        ((reserve.width - 1, 0), (half_w, 0, reserve.width - 1, half_h - 1)),
+        (
+            (reserve.width - 1, reserve.height - 1),
+            (half_w, half_h, reserve.width - 1, reserve.height - 1),
+        ),
+    ]
     drones: List[DroneAgent] = []
-    for idx in range(drone_count):
-        x_min = idx * sector_width
-        x_max = reserve.width - 1 if idx == drone_count - 1 else (idx + 1) * sector_width - 1
-        sector = (x_min, 0, x_max, reserve.height - 1)
+    for idx, (base_position, sector) in enumerate(sector_defs):
         jid = _with_resource(DRONE_JID, f"drone{idx + 1}")
-        if idx == 0:
-            base_position = (0, 0)
-        else:
-            base_position = _pick_sector_base(reserve, sector)
         drone = DroneAgent(
             jid,
             DRONE_PASS,
@@ -118,9 +123,20 @@ async def main(args: Any = None) -> None:
             base_position=base_position,
             patrol_sector=sector,
             patrol_seed=idx + 1,
-            callsign=callsigns[idx % len(callsigns)],
+            callsign=callsigns[idx],
         )
         drones.append(drone)
+
+    def _nearest_drone_jid(cell: Tuple[int, int]) -> str:
+        best = drones[0].jid
+        best_dist = float("inf")
+        for drone in drones:
+            bx, by = drone.base_position
+            dist = abs(bx - cell[0]) + abs(by - cell[1])
+            if dist < best_dist:
+                best_dist = dist
+                best = drone.jid
+        return best
 
     sensors: List[SensorAgent] = []
     placements = plan_sensor_grid(reserve)
@@ -130,7 +146,8 @@ async def main(args: Any = None) -> None:
             sensor_jid,
             SENSOR_PASS,
             reserve,
-            target_drone=DRONE_JID,
+            target_drone=_nearest_drone_jid(position),
+            target_ranger=RANGER_JID,
             position=position,
             coverage_bounds=bounds,
         )
@@ -231,4 +248,6 @@ async def main(args: Any = None) -> None:
 
 
 if __name__ == "__main__":
+    _patch_pyjabber_handle_user()
+    _patch_pyjabber_xml_protocol()
     spade.run(main(), embedded_xmpp_server=True)

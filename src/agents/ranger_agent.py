@@ -19,6 +19,7 @@ from core.messages import (
     ACCEPT,
     REJECT,
     CNP_ALERT,
+    DIRECT_ALERT,
     json_dumps,
     json_loads,
 )
@@ -63,6 +64,11 @@ class RangerAgent(Agent):
 
         # Ligação opcional a um writer externo (dashboard Week 6)
         self.metrics_writer: Optional[Any] = None
+        self._drone_positions: Dict[str, Tuple[int, int]] = {}
+        self._direct_assignments: Dict[str, str] = {}
+        self.reserve: Optional[Any] = None
+        self._alert_backlog: List[Dict[str, Any]] = []
+        self._processing_alerts: bool = False
 
     async def setup(self) -> None:
         self.log("Ranger ready for alerts…")
@@ -117,12 +123,21 @@ class RangerAgent(Agent):
 
         # NOVO #
         # Iniciar CNP apenas para POACHER
-        if category == "poacher":
+        confidence = alert_block.get("confidence") or payload.get("confidence")
+        high_conf_poacher = (
+            category == "poacher"
+            and isinstance(confidence, (int, float))
+            and confidence >= 0.7
+        )
+
+        if category == "poacher" and not high_conf_poacher:
             await self._start_cnp_for_alert(alert_block, category, behaviour)
+        elif high_conf_poacher:
+            await self._order_drone_follow(alert_block)
         # NOVO #
 
         # Política de horário (poacher ignora janelas)
-        if not self._can_dispatch_now(category):
+        if not self._can_dispatch_now(category) and not high_conf_poacher:
             self.log(
                 "Deferring alert",
                 alert_id,
@@ -134,43 +149,18 @@ class RangerAgent(Agent):
             )
             return
 
-        # Despacho físico do “ranger” em terra
-        self.log(
-            "Dispatching to alert",
-            alert_id,
-            "from",
-            payload.get("sensor"),
-            "category",
-            category,
+        # Enfileirar alerta e processar pela proximidade
+        self._alert_backlog.append(
+            {
+                "payload": payload,
+                "behaviour": behaviour,
+                "category": category,
+                "high_conf": high_conf_poacher,
+                "alert_id": alert_id,
+                "sender": str(msg.sender),
+            }
         )
-
-        path = self._plan_path_to_alert(payload)
-        if path:
-            route_str = " -> ".join(f"({x},{y})" for x, y in path)
-            self.log("Ranger route", route_str)
-            await self._travel_path(path)
-            self.log(
-                "Ranger arrived at alert",
-                alert_id,
-                "after",
-                len(path) - 1,
-                "steps.",
-            )
-            self._update_field_position(path[-1])
-            self._consume_fuel(len(path) - 1)
-            self._check_refuel_need()
-            self.dispatch_counts[category] += 1
-            if self.metrics_writer and path:
-                steps = max(0, len(path) - 1)
-                self.metrics_writer.record_response(steps)
-                self.metrics_writer.record_energy("RANGER", steps)
-            await self._confirm_dispatch(behaviour, str(msg.sender), payload)
-        else:
-            self.log(
-                "No dispatch sent for alert",
-                alert_id,
-                "due to constraints.",
-            )
+        await self._process_alert_backlog()
 
     # ================================
     #   CNP MANAGEMENT
@@ -368,6 +358,21 @@ class RangerAgent(Agent):
             "position",
             payload.get("position"),
         )
+        drone_id = str(payload.get("drone") or msg.sender)
+        pos = payload.get("position")
+        coords: Optional[Tuple[int, int]] = None
+        if isinstance(pos, dict):
+            x = pos.get("x")
+            y = pos.get("y")
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                coords = (int(x), int(y))
+        elif isinstance(pos, (list, tuple)) and len(pos) == 2:
+            try:
+                coords = (int(pos[0]), int(pos[1]))
+            except Exception:
+                coords = None
+        if coords:
+            self._drone_positions[drone_id] = coords
 
     def log(self, *args: Any) -> None:
         print("[RANGER]", *args)
@@ -412,6 +417,195 @@ class RangerAgent(Agent):
             return []
 
         return self._build_manhattan_path(self._current_position, target)
+
+    async def _order_drone_follow(self, alert_block: Dict[str, Any]) -> None:
+        alert_id = alert_block.get("id")
+        pos = alert_block.get("pos")
+        if (
+            not alert_id
+            or not isinstance(pos, (list, tuple))
+            or len(pos) != 2
+        ):
+            return
+        try:
+            target = (int(pos[0]), int(pos[1]))
+        except Exception:
+            return
+        drone_jid = self._nearest_drone_jid(target)
+        if not drone_jid:
+            self.log("No drone available for direct follow on", alert_id)
+            return
+        payload = {
+            "alert_id": alert_id,
+            "category": alert_block.get("category", "poacher"),
+            "pos": target,
+            "action": "follow",
+        }
+        msg = Message(to=drone_jid)
+        msg.set_metadata("performative", INFORM)
+        msg.set_metadata("type", DIRECT_ALERT)
+        msg.body = json_dumps(payload)
+        await self.send(msg)
+        self._direct_assignments[alert_id] = drone_jid
+        self.log("Ordered direct follow on", alert_id, "by", drone_jid)
+
+    async def _notify_drone_relief(self, alert_id: Optional[str]) -> None:
+        if not alert_id:
+            return
+        drone_jid = self._direct_assignments.pop(alert_id, None)
+        if not drone_jid:
+            return
+        payload = {"alert_id": alert_id, "action": "stand_down"}
+        msg = Message(to=drone_jid)
+        msg.set_metadata("performative", INFORM)
+        msg.set_metadata("type", DIRECT_ALERT)
+        msg.body = json_dumps(payload)
+        await self.send(msg)
+        self.log("Notified", drone_jid, "to stand down for", alert_id)
+
+    def _nearest_drone_jid(self, target: Tuple[int, int]) -> Optional[str]:
+        best: Optional[str] = None
+        best_dist = float("inf")
+        for jid, pos in self._drone_positions.items():
+            dist = abs(pos[0] - target[0]) + abs(pos[1] - target[1])
+            if dist < best_dist:
+                best = jid
+                best_dist = dist
+        if best:
+            return best
+        # fallback to the first registered drone
+        return self.drone_jids[0] if self.drone_jids else None
+
+    async def _process_alert_backlog(self) -> None:
+        if self._processing_alerts:
+            return
+        self._processing_alerts = True
+        try:
+            while self._alert_backlog:
+                idx = self._select_closest_alert_index()
+                record = self._alert_backlog.pop(idx)
+                await self._handle_single_alert(record)
+        finally:
+            self._processing_alerts = False
+
+    def _select_closest_alert_index(self) -> int:
+        if not self._alert_backlog:
+            return 0
+        best_idx = 0
+        best_dist = float("inf")
+        for idx, record in enumerate(self._alert_backlog):
+            alert = record.get("payload", {}).get("alert", {})
+            pos = alert.get("pos")
+            if not isinstance(pos, (list, tuple)) or len(pos) != 2:
+                continue
+            try:
+                target = (int(pos[0]), int(pos[1]))
+            except Exception:
+                continue
+            dist = self._manhattan_distance(self._current_position, target)
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+        return best_idx
+
+    async def _handle_single_alert(self, record: Dict[str, Any]) -> None:
+        payload = record["payload"]
+        behaviour = record["behaviour"]
+        category = record["category"]
+        high_conf_poacher = record["high_conf"]
+        alert_id = record.get("alert_id")
+
+        if not self._can_dispatch_now(category) and not high_conf_poacher:
+            self.log(
+                "Deferring alert",
+                alert_id,
+                "category",
+                category,
+                "outside operating window (hour",
+                self._current_hour(),
+                ").",
+            )
+            self._alert_backlog.append(record)
+            await asyncio.sleep(1)
+            return
+
+        self.log(
+            "Dispatching to alert",
+            alert_id,
+            "from",
+            payload.get("sensor"),
+            "category",
+            category,
+        )
+
+        path = self._plan_path_to_alert(payload)
+        if path:
+            route_str = " -> ".join(f"({x},{y})" for x, y in path)
+            self.log("Ranger route", route_str)
+            await self._travel_path(path)
+            self.log(
+                "Ranger arrived at alert",
+                alert_id,
+                "after",
+                len(path) - 1,
+                "steps.",
+            )
+            self._update_field_position(path[-1])
+            self._consume_fuel(len(path) - 1)
+            self._check_refuel_need()
+            captured_poacher = False
+            if category == "poacher":
+                captured_poacher = self._capture_poacher_near(path[-1])
+                if captured_poacher:
+                    self.log("Poacher apprehended at", path[-1], "- transporting to base.")
+                    await self._escort_poacher_to_base()
+            self.dispatch_counts[category] += 1
+            if self.metrics_writer and path:
+                steps = max(0, len(path) - 1)
+                self.metrics_writer.record_response(steps)
+                self.metrics_writer.record_energy("RANGER", steps)
+            await self._confirm_dispatch(behaviour, record.get("sender", ""), payload)
+            if high_conf_poacher:
+                await self._notify_drone_relief(alert_id)
+        else:
+            self.log(
+                "No dispatch sent for alert",
+                alert_id,
+                "due to constraints.",
+            )
+            if high_conf_poacher:
+                await self._notify_drone_relief(alert_id)
+
+    def _capture_poacher_near(self, position: Tuple[int, int], radius: int = 1) -> bool:
+        reserve = getattr(self, "reserve", None)
+        engine = getattr(reserve, "events", None) if reserve else None
+        if engine is None:
+            return False
+        captured = False
+        px, py = position
+        for poacher in list(engine.poachers):
+            dist = abs(poacher.pos[0] - px) + abs(poacher.pos[1] - py)
+            if dist <= radius:
+                poacher.active = False
+                captured = True
+                self.log("Apprehended poacher", poacher.id, "at", poacher.pos)
+        if captured:
+            engine.poachers = [p for p in engine.poachers if p.active]
+        return captured
+
+    async def _escort_poacher_to_base(self) -> None:
+        if self._current_position == self._base_position:
+            self.log("Already at base with detainee.")
+            return
+        path = self._build_manhattan_path(self._current_position, self._base_position)
+        self.log("Escorting detainee to base over", len(path) - 1, "steps.")
+        for step, waypoint in enumerate(path[1:], start=1):
+            await asyncio.sleep(self.travel_time_per_step_s)
+            self._update_field_position(waypoint)
+            self._consume_fuel(1)
+            self.log("Escort step", step, "->", waypoint)
+        self.log("Poacher delivered to base.")
+        self._refuel()
 
     def _update_field_position(self, new_position: Tuple[int, int]) -> None:
         self._current_position = new_position

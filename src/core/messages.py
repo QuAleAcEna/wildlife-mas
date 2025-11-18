@@ -14,6 +14,7 @@ TELEMETRY = "telemetry"
 # NOVO #
 CNP_ALERT = "cnp.alert"
 # NOVO #
+DIRECT_ALERT = "direct.alert"
 
 
 def make_inform_alert(to_jid: str, payload: dict) -> Message:

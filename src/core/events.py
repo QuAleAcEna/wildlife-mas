@@ -45,9 +45,17 @@ class Poacher:
     pos: Coord
     speed: int = 1
     active: bool = True
+    target: Optional[Coord] = None
+    exit_target: Optional[Coord] = None
+    returning: bool = False
+    move_cooldown: float = 0.0
 
     def __repr__(self) -> str:
-        return f"Poacher(id={self.id}, pos={self.pos}, speed={self.speed}, active={self.active})"
+        return (
+            "Poacher("
+            f"id={self.id}, pos={self.pos}, speed={self.speed}, active={self.active}, "
+            f"target={self.target}, exit_target={self.exit_target}, returning={self.returning})"
+        )
 
 
 @dataclass
@@ -85,6 +93,7 @@ class WorldEventEngine:
         self._rng = random.Random(seed)
         self.poachers: List[Poacher] = []
         self.herds: List[Herd] = []
+        self._poacher_move_interval = getattr(self.clock, "seconds_per_hour", 10.0) or 10.0
 
         # Liga o engine ao reserve para fácil acesso a partir dos agentes (não quebra API existente)
         # Os agentes podem fazer: getattr(reserve, "events", None)
@@ -101,7 +110,12 @@ class WorldEventEngine:
         # Movimento
         for p in list(self.poachers):
             if p.active:
+                p.move_cooldown = max(0.0, p.move_cooldown - self.cfg.tick_seconds)
+                if p.move_cooldown > 0.0:
+                    continue
                 self._step_poacher(p)
+                if p.active:
+                    p.move_cooldown = self._poacher_move_interval
 
         for h in list(self.herds):
             if h.active:
@@ -141,11 +155,16 @@ class WorldEventEngine:
             return
         if self._rng.random() > self.cfg.spawn_prob_poacher:
             return
-        pos = self._sample_free_cell(edge_bias=True)
+        pos = self._sample_border_cell()
+        target = self._sample_goal_from(pos)
+        exit_target = self._sample_border_cell()
         poacher = Poacher(
             id=f"poacher-{self._rng.getrandbits(32):08x}",
             pos=pos,
             speed=max(1, self.cfg.poacher_speed),
+            target=target,
+            exit_target=exit_target,
+            move_cooldown=0.0,
         )
         self.poachers.append(poacher)
 
@@ -171,15 +190,32 @@ class WorldEventEngine:
     # ---------- Movimento ----------
 
     def _step_poacher(self, p: Poacher) -> None:
-        """Poacher faz random-walk (ligeiro viés para interior do mapa)."""
-        for _ in range(self.cfg.max_retries_relocate):
-            nx, ny = self._random_neighbor(p.pos, step=p.speed, inward_bias=True)
-            npos = self._clamp((nx, ny))
-            if not self.reserve.is_no_fly(npos):
-                p.pos = npos
-                return
-        # Se falhar consistentemente, desativa (situação rara)
-        p.active = False
+        """
+        Poacher percorre um objetivo interno e depois regressa à borda.
+        Cada passo respeita as no-fly zones para evitar soft-locks.
+        """
+        if not p.returning and p.target is None:
+            p.target = self._sample_goal_from(p.pos)
+        if p.returning and p.exit_target is None:
+            p.exit_target = self._sample_border_cell()
+
+        destination = p.exit_target if p.returning else p.target
+        if destination is None:
+            p.active = False
+            return
+
+        moved = self._move_towards(p, destination)
+        if not moved:
+            p.active = False
+            return
+
+        if p.pos == destination:
+            if not p.returning:
+                # Objetivo interno alcançado → apontar para saída
+                p.returning = True
+            else:
+                # Chegou à borda → sai da reserva
+                p.active = False
 
     def _step_herd(self, h: Herd) -> None:
         """Herd migra suavemente para o objetivo; se não houver, random-walk suave."""
@@ -303,6 +339,37 @@ class WorldEventEngine:
             self._rng.shuffle(candidates)
         return candidates[0]
 
+    def _move_towards(self, poacher: Poacher, target: Coord) -> bool:
+        """Move poacher um passo em direção ao target contornando no-fly zones."""
+        cx, cy = poacher.pos
+        tx, ty = target
+        dx = 0 if cx == tx else (1 if tx > cx else -1)
+        dy = 0 if cy == ty else (1 if ty > cy else -1)
+
+        primary_axis_is_x = abs(tx - cx) >= abs(ty - cy)
+        candidates = []
+        if primary_axis_is_x:
+            candidates.append((cx + dx * poacher.speed, cy))
+            candidates.append((cx, cy + dy * poacher.speed))
+        else:
+            candidates.append((cx, cy + dy * poacher.speed))
+            candidates.append((cx + dx * poacher.speed, cy))
+
+        # Complementar: tenta diagonais simples e pequenos desvios
+        candidates.extend(
+            [
+                (cx + dx * poacher.speed, cy + dy * poacher.speed),
+                (cx - dx * poacher.speed, cy),
+                (cx, cy - dy * poacher.speed),
+            ]
+        )
+        for cand in candidates:
+            cand = self._clamp(cand)
+            if not self.reserve.is_no_fly(cand):
+                poacher.pos = cand
+                return True
+        return False
+
     def _clamp(self, pos: Coord) -> Coord:
         x = max(0, min(self.reserve.width - 1, pos[0]))
         y = max(0, min(self.reserve.height - 1, pos[1]))
@@ -311,4 +378,19 @@ class WorldEventEngine:
     @staticmethod
     def _manhattan(a: Coord, b: Coord) -> int:
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def _sample_border_cell(self) -> Coord:
+        """Escolhe sempre uma célula na borda da reserva."""
+        w, h = self.reserve.width, self.reserve.height
+        for _ in range(self.cfg.max_retries_relocate):
+            if self._rng.random() < 0.5:
+                x = self._rng.randrange(w)
+                y = 0 if self._rng.random() < 0.5 else (h - 1)
+            else:
+                y = self._rng.randrange(h)
+                x = 0 if self._rng.random() < 0.5 else (w - 1)
+            cell = (x, y)
+            if not self.reserve.is_no_fly(cell):
+                return cell
+        return (0, 0)
 
