@@ -1,3 +1,5 @@
+"""Stochastic world event engine that spawns poachers and herds within the reserve."""
+
 # NOVO #
 from __future__ import annotations
 
@@ -41,6 +43,8 @@ class EventConfig:
 
 @dataclass
 class Poacher:
+    """Moving adversary that enters from the border, hunts, and attempts an exit."""
+
     id: str
     pos: Coord
     speed: int = 1
@@ -51,6 +55,7 @@ class Poacher:
     move_cooldown: float = 0.0
 
     def __repr__(self) -> str:
+        """Readable representation for debugging dashboards."""
         return (
             "Poacher("
             f"id={self.id}, pos={self.pos}, speed={self.speed}, active={self.active}, "
@@ -60,6 +65,8 @@ class Poacher:
 
 @dataclass
 class Herd:
+    """Group of animals migrating between goals while avoiding no-fly zones."""
+
     id: str
     center: Coord
     size: int = 8
@@ -68,6 +75,7 @@ class Herd:
     active: bool = True
 
     def __repr__(self) -> str:
+        """Readable representation for debugging dashboards."""
         return (
             f"Herd(id={self.id}, center={self.center}, size={self.size}, "
             f"speed={self.speed}, migration_goal={self.migration_goal}, active={self.active})"
@@ -87,6 +95,14 @@ class WorldEventEngine:
         config: Optional[EventConfig] = None,
         seed: Optional[int] = None,
     ) -> None:
+        """Create a new engine bound to the given reserve and optional seed.
+
+        Args:
+            reserve (Reserve): Environment grid shared with agents.
+            clock (EnvironmentClock | None): Simulation clock to derive pacing from.
+            config (EventConfig | None): Behavioural settings; defaults to EventConfig().
+            seed (int | None): Optional RNG seed for deterministic behaviour.
+        """
         self.reserve = reserve
         self.clock = clock or reserve.clock
         self.cfg = config or EventConfig()
@@ -151,6 +167,7 @@ class WorldEventEngine:
     # ---------- Spawns ----------
 
     def _maybe_spawn_poacher(self) -> None:
+        """Probabilistically introduce a poacher entering from the border."""
         if len(self.poachers) >= self.cfg.max_poachers:
             return
         if self._rng.random() > self.cfg.spawn_prob_poacher:
@@ -169,6 +186,7 @@ class WorldEventEngine:
         self.poachers.append(poacher)
 
     def _maybe_spawn_herd(self) -> None:
+        """Probabilistically introduce a new herd within the reserve interior."""
         if len(self.herds) >= self.cfg.max_herds:
             return
         if self._rng.random() > self.cfg.spawn_prob_herd:
@@ -332,6 +350,7 @@ class WorldEventEngine:
         ]
         if inward_bias:
             def edge_dist(c: Coord) -> int:
+                """Return the distance of candidate `c` from the map edges."""
                 cx, cy = self._clamp(c)
                 return min(cx, self.reserve.width - 1 - cx, cy, self.reserve.height - 1 - cy)
             candidates.sort(key=edge_dist, reverse=True)
@@ -371,12 +390,14 @@ class WorldEventEngine:
         return False
 
     def _clamp(self, pos: Coord) -> Coord:
+        """Ensure coordinates remain within the reserve bounds."""
         x = max(0, min(self.reserve.width - 1, pos[0]))
         y = max(0, min(self.reserve.height - 1, pos[1]))
         return (x, y)
 
     @staticmethod
     def _manhattan(a: Coord, b: Coord) -> int:
+        """Return the Manhattan distance between two coordinates."""
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
     def _sample_border_cell(self) -> Coord:

@@ -1,3 +1,5 @@
+"""State writer that powers the dashboard JSON feed and historical exports."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +21,7 @@ Coord = Tuple[int, int]
 
 
 def _safe_tuple(value: Optional[Sequence[int]]) -> Optional[Tuple[int, int]]:
+    """Convert arbitrary sequences into 2D tuples when valid."""
     if not value:
         return None
     if len(value) != 2:
@@ -46,6 +49,7 @@ class DashboardStateWriter:
     history_limit: int = 900  # ~15 min de histórico
 
     def __post_init__(self) -> None:
+        """Create output directories and initialize internal caches."""
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self._history: List[Dict[str, Any]] = []
         self._response_times: List[int] = []
@@ -65,10 +69,12 @@ class DashboardStateWriter:
             self._last_recorded_hour = None
 
     def record_response(self, steps: int) -> None:
+        """Register the number of steps taken by the ranger to reach an alert."""
         if steps >= 0:
             self._response_times.append(steps)
 
     def record_energy(self, callsign: str, delta: float) -> None:
+        """Track energy consumption deltas keyed by agent callsign."""
         self._energy_log.append((callsign, delta))
 
     async def run(self) -> None:
@@ -86,6 +92,7 @@ class DashboardStateWriter:
     # Snapshot assembly helpers
     # ------------------------------------------------------------------
     def _current_clock_state(self) -> Tuple[int, int, float]:
+        """Determine the current simulated day/hour even if the clock isn't running."""
         clock = getattr(self.events, "clock", None) or getattr(self.reserve, "clock", None)
         if clock and getattr(clock, "current_day", None) is not None:
             day = getattr(clock, "current_day", self._clock_start_day)
@@ -99,6 +106,7 @@ class DashboardStateWriter:
         return day, hour, sim_hours
 
     def _build_snapshot(self) -> Dict[str, Any]:
+        """Assemble the full snapshot dictionary consumed by the frontend."""
         now = datetime.utcnow().isoformat() + "Z"
         day, hour, elapsed_hours = self._current_clock_state()
         snapshot = {
@@ -135,6 +143,7 @@ class DashboardStateWriter:
         return snapshot
 
     def _metrics_payload(self) -> Dict[str, Any]:
+        """Collect lightweight counters for display on the dashboard."""
         alert_breakdown = dict(self.ranger.alert_counts)
         dispatch_breakdown = dict(self.ranger.dispatch_counts)
         pending_cnp = getattr(self.ranger, "_cnp_pending", {})
@@ -153,6 +162,7 @@ class DashboardStateWriter:
         return metrics
 
     def _record_coverage(self, snapshot: Dict[str, Any]) -> None:
+        """Update the set of visited cells based on the latest snapshot."""
         for drone in snapshot["agents"]["drones"]:
             pos = drone.get("position")
             if isinstance(pos, list) and len(pos) == 2:
@@ -162,6 +172,7 @@ class DashboardStateWriter:
             self._visited_cells.add(tuple(ranger_pos))
 
     def _should_record_history(self, snapshot: Dict[str, Any]) -> bool:
+        """Record at most one snapshot per simulated hour."""
         clock = snapshot.get("clock", {})
         key = (clock.get("day"), clock.get("hour"))
         if key != self._last_recorded_hour:
@@ -170,6 +181,7 @@ class DashboardStateWriter:
         return False
 
     def _kpi_payload(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """Compute derived KPIs such as coverage and response time averages."""
         drones = snapshot["agents"]["drones"]
         avg_battery = (
             round(sum(d.get("battery_pct") or 0.0 for d in drones) / len(drones), 2)
@@ -203,6 +215,7 @@ class DashboardStateWriter:
         }
 
     def export_history(self, path: Path) -> None:
+        """Persist accumulated snapshots to disk as JSON."""
         if not self._history:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +223,7 @@ class DashboardStateWriter:
             json.dump(self._history, fh, indent=2)
 
     def export_kpis_csv(self, path: Path) -> None:
+        """Persist KPI history to CSV for plotting."""
         import csv
 
         if not self._history:
@@ -248,11 +262,13 @@ class DashboardStateWriter:
                 )
 
     def register_export_paths(self, history_path: Path, csv_path: Path) -> None:
+        """Register output files that will be flushed automatically on exit."""
         self._history_file = history_path
         self._kpi_file = csv_path
         atexit.register(self._export_at_exit)
 
     def _export_at_exit(self) -> None:
+        """Write pending exports if they haven't been flushed yet."""
         if self._exported_once:
             return
         history_path = self._history_file
@@ -270,10 +286,12 @@ class DashboardStateWriter:
         self._exported_once = True
 
     def _recent_alerts(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return the most recent alerts slimmed down to key fields."""
         alerts = self.ranger.alert_history[-limit:]
         return [self._slim_alert(a) for a in alerts]
 
     def _cnp_pending(self) -> List[Dict[str, Any]]:
+        """Expose pending CNP negotiations to the dashboard."""
         pending = getattr(self.ranger, "_cnp_pending", {})
         out: List[Dict[str, Any]] = []
         for alert_id, block in pending.items():
@@ -289,6 +307,7 @@ class DashboardStateWriter:
         return out
 
     def _slim_alert(self, alert: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize alert payloads irrespective of their origin."""
         payload = alert.copy()
         alert_block = payload.get("alert")
         if not isinstance(alert_block, dict):
@@ -313,6 +332,7 @@ class DashboardStateWriter:
         }
 
     def _snapshot_ranger(self) -> Dict[str, Any]:
+        """Serialize ranger state into a JSON-friendly structure."""
         pos = getattr(self.ranger, "_current_position", (0, 0))
         base = getattr(self.ranger, "_base_position", (0, 0))
         return {
@@ -324,6 +344,7 @@ class DashboardStateWriter:
         }
 
     def _snapshot_drone(self, drone: DroneAgent) -> Dict[str, Any]:
+        """Serialize a single drone, including patrol metadata and queue depth."""
         if drone.max_battery > 0:
             battery_pct = round((drone.battery_level / drone.max_battery) * 100, 1)
         else:
@@ -351,6 +372,7 @@ class DashboardStateWriter:
         }
 
     def _snapshot_sensor(self, sensor: SensorAgent) -> Dict[str, Any]:
+        """Serialize a ground sensor for frontend display."""
         return {
             "jid": str(sensor.jid),
             "position": list(sensor.position),
@@ -358,6 +380,7 @@ class DashboardStateWriter:
         }
 
     def _snapshot_tracker(self, tracker: AnimalTrackerAgent) -> Dict[str, Any]:
+        """Serialize a tracked animal including its next goal."""
         goal = getattr(tracker, "_goal", None)
         return {
             "jid": str(tracker.jid),
@@ -367,6 +390,7 @@ class DashboardStateWriter:
         }
 
     def _snapshot_poacher(self, poacher: Poacher) -> Dict[str, Any]:
+        """Serialize a poacher entity for the dashboard."""
         return {
             "id": poacher.id,
             "position": list(poacher.pos),
@@ -374,6 +398,7 @@ class DashboardStateWriter:
         }
 
     def _snapshot_herd(self, herd: Herd) -> Dict[str, Any]:
+        """Serialize a herd entity for the dashboard."""
         return {
             "id": herd.id,
             "center": list(herd.center),

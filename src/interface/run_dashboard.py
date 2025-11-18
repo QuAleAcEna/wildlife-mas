@@ -1,3 +1,5 @@
+"""Entry point that launches the agents and serves the dashboard web UI."""
+
 from __future__ import annotations
 
 import asyncio
@@ -45,7 +47,10 @@ def _start_static_server(directory: Path, preferred_port: int = 8000) -> Tuple[T
     """
 
     class Handler(SimpleHTTPRequestHandler):
+        """HTTP handler bound to the dashboard static directory."""
+
         def __init__(self, *args, **kwargs):
+            """Proxy initialization while forcing the desired directory."""
             super().__init__(*args, directory=str(directory), **kwargs)
 
     last_error: Optional[Exception] = None
@@ -128,6 +133,7 @@ async def main(args: Any = None) -> None:
         drones.append(drone)
 
     def _nearest_drone_jid(cell: Tuple[int, int]) -> str:
+        """Pick the JID of the drone whose base is closest to the cell."""
         best = drones[0].jid
         best_dist = float("inf")
         for drone in drones:

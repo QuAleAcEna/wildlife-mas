@@ -1,3 +1,5 @@
+"""Utility script that boots every agent for end-to-end simulations."""
+
 import asyncio
 import json
 import logging
@@ -242,6 +244,7 @@ def _patch_pyjabber_handle_user() -> None:
     web = api_module.web
 
     async def handle_user(request):  # pragma: no cover - runtime side effect
+        """Serve the embedded SPADE credential table for the dashboard UI."""
         with DB.connection() as con:
             result = con.execute(text("SELECT id, jid FROM credentials"))
             rows = result.fetchall()
@@ -268,6 +271,7 @@ def _patch_pyjabber_xml_protocol() -> None:
     original = xml_protocol_module.XMLProtocol.data_received
 
     def data_received(self, data):  # pragma: no cover - runtime side effect
+        """Ignore malformed probes while keeping normal XMPP traffic intact."""
         try:
             return original(self, data)
         except sax.SAXParseException as exc:

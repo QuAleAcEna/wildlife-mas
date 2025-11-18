@@ -1,3 +1,5 @@
+"""Passive ground sensor agent that watches the reserve and emits alerts."""
+
 import random
 import time
 import uuid
@@ -74,6 +76,7 @@ class SensorAgent(agent.Agent):
         # NOVO #
 
     def _compute_detection_radius(self) -> int:
+        """Derive a Chebyshev-like coverage radius from bounds or defaults."""
         if not self.coverage_bounds:
             return SENSOR_COVERAGE_SIZE
         x_min, y_min, x_max, y_max = self.coverage_bounds
@@ -88,6 +91,7 @@ class SensorAgent(agent.Agent):
         return max(1, radius)
 
     def _in_coverage(self, cell: Tuple[int, int]) -> bool:
+        """Return True if a grid cell is inside the sensor's coverage bounds."""
         if not self.coverage_bounds:
             return True
         x_min, y_min, x_max, y_max = self.coverage_bounds

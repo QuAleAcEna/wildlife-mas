@@ -1,3 +1,5 @@
+"""Plot helper that turns dashboard KPI CSVs into PNG charts."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,6 +10,7 @@ import pandas as pd
 
 
 def plot_dashboard(csv_path: Path, output_path: Path) -> None:
+    """Render a KPI overview plot and save it to disk."""
     df = pd.read_csv(csv_path)
     if df.empty:
         print("CSV vazio, nada para plotar.")
@@ -61,6 +64,7 @@ def plot_dashboard(csv_path: Path, output_path: Path) -> None:
 
 
 def main() -> None:
+    """Parse CLI arguments and generate the KPI plot."""
     parser = argparse.ArgumentParser(description="Gera um gráfico a partir do dashboard_metrics.csv.")
     parser.add_argument(
         "--csv",
@@ -80,4 +84,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

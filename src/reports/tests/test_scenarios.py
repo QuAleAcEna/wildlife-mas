@@ -1,3 +1,5 @@
+"""Standalone scenario simulator used to validate KPI trends."""
+
 from __future__ import annotations
 
 import argparse
@@ -36,6 +38,8 @@ class Scenario:
 
 @dataclass
 class ThreatRecord:
+    """Record describing a spawned threat along with detection timestamps."""
+
     id: str
     kind: str
     spawn_tick: int
@@ -46,6 +50,8 @@ class ThreatRecord:
 
 @dataclass
 class PatrolDrone:
+    """Lightweight patrol drone used for deterministic simulations."""
+
     name: str
     route: List[Coord]
     idx: int = 0
@@ -53,15 +59,18 @@ class PatrolDrone:
     energy_used: int = 0
 
     def __post_init__(self) -> None:
+        """Initialize the starting position from the chosen route index."""
         self.position = self.route[self.idx]
 
     def step(self) -> None:
+        """Advance to the next waypoint and accumulate energy usage."""
         self.idx = (self.idx + 1) % len(self.route)
         self.position = self.route[self.idx]
         self.energy_used += 1
 
 
 def _build_config(overrides: Dict[str, Any]) -> EventConfig:
+    """Create an EventConfig copy applying CLI overrides."""
     cfg = EventConfig()
     for key, value in overrides.items():
         if not hasattr(cfg, key):
@@ -71,10 +80,12 @@ def _build_config(overrides: Dict[str, Any]) -> EventConfig:
 
 
 def _manhattan(a: Coord, b: Coord) -> int:
+    """Return the Manhattan distance between two coordinates."""
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
 def _build_patrol_route(width: int, height: int) -> List[Coord]:
+    """Generate a serpentine route that visits every cell of the grid."""
     route: List[Coord] = []
     for y in range(height):
         xs = range(width) if y % 2 == 0 else range(width - 1, -1, -1)
@@ -84,6 +95,7 @@ def _build_patrol_route(width: int, height: int) -> List[Coord]:
 
 
 def _spawn_drones(reserve: Reserve, count: int = 3) -> List[PatrolDrone]:
+    """Instantiate evenly spaced PatrolDrone objects over the shared route."""
     base_route = _build_patrol_route(reserve.width, reserve.height)
     spacing = max(1, len(base_route) // count)
     drones: List[PatrolDrone] = []
@@ -94,6 +106,7 @@ def _spawn_drones(reserve: Reserve, count: int = 3) -> List[PatrolDrone]:
 
 
 def _default_scenarios(ticks: int) -> Iterable[Scenario]:
+    """Yield canonical scenarios covering baseline, single, and mixed threats."""
     return (
         Scenario(
             name="patrol_only",
@@ -135,6 +148,7 @@ def _default_scenarios(ticks: int) -> Iterable[Scenario]:
 
 
 def _is_detected(threat: ThreatRecord, drones: List[PatrolDrone]) -> bool:
+    """Check if a threat is within range of any static sensor or drone."""
     for sensor in SENSOR_POSITIONS:
         if _manhattan(sensor, threat.pos) <= SENSOR_RADIUS:
             return True
@@ -142,6 +156,7 @@ def _is_detected(threat: ThreatRecord, drones: List[PatrolDrone]) -> bool:
 
 
 def _run_single_scenario(scenario: Scenario) -> Dict[str, Any]:
+    """Run a scenario to completion and compute summary KPIs."""
     reserve = Reserve()
     config = _build_config(scenario.overrides)
     engine = WorldEventEngine(reserve=reserve, config=config, seed=scenario.seed)
@@ -222,6 +237,7 @@ def _run_single_scenario(scenario: Scenario) -> Dict[str, Any]:
 
 
 def _write_csv(rows: List[Dict[str, Any]], output_path: Path) -> None:
+    """Write aggregated KPI rows to CSV."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "scenario",
@@ -243,6 +259,7 @@ def _write_csv(rows: List[Dict[str, Any]], output_path: Path) -> None:
 
 
 def _export_plot(rows: List[Dict[str, Any]], output_path: Path) -> None:
+    """Create a bar chart comparing detection and coverage per scenario."""
     try:
         import matplotlib.pyplot as plt
     except Exception:
@@ -273,6 +290,7 @@ def _export_plot(rows: List[Dict[str, Any]], output_path: Path) -> None:
 
 
 def main() -> None:
+    """CLI entry point for orchestrating the scenario experiments."""
     parser = argparse.ArgumentParser(
         description="Run KPI-oriented scenarios (patrol baseline, single poacher, stress test) and export metrics."
     )
@@ -312,4 +330,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,3 +1,5 @@
+"""SPADe ranger command agent that orchestrates alerts, dispatches and drones."""
+
 from __future__ import annotations
 
 import asyncio
@@ -37,6 +39,14 @@ class RangerAgent(Agent):
         dispatch_delay_s: float = 12.0,
         clock: Optional[EnvironmentClock] = None,
     ):
+        """Initialize the ranger with timing, fuel, and collaboration settings.
+
+        Args:
+            jid (str): XMPP identifier for the ranger agent.
+            password (str): XMPP password for the ranger agent.
+            dispatch_delay_s (float, optional): Delay applied before starting a patrol.
+            clock (EnvironmentClock | None, optional): Shared simulation clock.
+        """
         super().__init__(jid, password)
         self.dispatch_delay_s = dispatch_delay_s
         self.alert_history: List[Dict[str, Any]] = []
@@ -71,6 +81,7 @@ class RangerAgent(Agent):
         self._processing_alerts: bool = False
 
     async def setup(self) -> None:
+        """Register behaviours to receive alerts, telemetry, and CNP proposals."""
         self.log("Ranger ready for alerts…")
 
         # ALERTS
@@ -104,6 +115,12 @@ class RangerAgent(Agent):
         behaviour: "RangerAgent.AlertReceptionBehaviour",
         msg: Message,
     ) -> None:
+        """React to incoming anomaly notifications from drones or sensors.
+
+        Args:
+            behaviour (AlertReceptionBehaviour): Behaviour relaying the message.
+            msg (Message): SPADE message that triggered the callback.
+        """
         payload = self._safe_load(msg.body)
         if not payload:
             self.log("Received empty notification from", msg.sender)
@@ -314,6 +331,14 @@ class RangerAgent(Agent):
     # ================================
 
     def _safe_load(self, body: str | None) -> Dict[str, Any]:
+        """Parse JSON payloads defensively, surfacing malformed bodies as-is.
+
+        Args:
+            body (str | None): Raw message body.
+
+        Returns:
+            Dict[str, Any]: Parsed dictionary or a `raw_body` placeholder.
+        """
         if not body:
             return {}
         try:
@@ -327,6 +352,13 @@ class RangerAgent(Agent):
         drone: str,
         payload: Dict[str, Any],
     ) -> None:
+        """Send a telemetry acknowledgement confirming that a dispatch started.
+
+        Args:
+            behaviour (AlertReceptionBehaviour): Behaviour used to reply.
+            drone (str): Target drone JID for the confirmation.
+            payload (Dict[str, Any]): Original alert payload for context.
+        """
         response = {
             "ranger": str(self.jid),
             "alert_id": payload.get("alert", {}).get("id"),
@@ -346,6 +378,12 @@ class RangerAgent(Agent):
         _: "RangerAgent.TelemetryReceptionBehaviour",
         msg: Message,
     ) -> None:
+        """Persist and log telemetry updates shared by drones.
+
+        Args:
+            _ (TelemetryReceptionBehaviour): Behaviour placeholder.
+            msg (Message): Incoming message containing telemetry.
+        """
         payload = self._safe_load(msg.body)
         if not payload:
             self.log("Empty telemetry")
@@ -375,14 +413,17 @@ class RangerAgent(Agent):
             self._drone_positions[drone_id] = coords
 
     def log(self, *args: Any) -> None:
+        """Central logging helper that prefixes records with the agent role."""
         print("[RANGER]", *args)
 
     def _current_hour(self) -> int:
+        """Return the current simulation hour, falling back to wall-clock time."""
         if self.clock:
             return self.clock.current_hour % 24
         return dt.datetime.utcnow().hour
 
     def _within_operating_hours(self) -> bool:
+        """Check whether the ranger's schedule permits dispatches right now."""
         hour = self._current_hour()
         if 9 <= hour < 17:
             return True
@@ -391,7 +432,14 @@ class RangerAgent(Agent):
         return False
 
     def _can_dispatch_now(self, category: str) -> bool:
-        # Poacher ignora restrição de horário
+        """Determine if an alert category can be serviced immediately.
+
+        Args:
+            category (str): Alert category tag.
+
+        Returns:
+            bool: True when deployment is allowed for the current hour.
+        """
         if category == "poacher":
             return True
         return self._within_operating_hours()
@@ -401,6 +449,14 @@ class RangerAgent(Agent):
     # ================================
 
     def _plan_path_to_alert(self, payload: Dict[str, Any]) -> List[Tuple[int, int]]:
+        """Translate an alert payload into a traversable path for the ranger.
+
+        Args:
+            payload (Dict[str, Any]): Alert containing a nested `alert.pos`.
+
+        Returns:
+            List[Tuple[int, int]]: Manhattan path including current position.
+        """
         alert_pos = payload.get("alert", {}).get("pos")
         if not isinstance(alert_pos, (list, tuple)) or len(alert_pos) != 2:
             self.log("Invalid alert position", alert_pos)
@@ -419,6 +475,11 @@ class RangerAgent(Agent):
         return self._build_manhattan_path(self._current_position, target)
 
     async def _order_drone_follow(self, alert_block: Dict[str, Any]) -> None:
+        """Instruct the nearest drone to shadow a high-confidence poacher alert.
+
+        Args:
+            alert_block (Dict[str, Any]): Canonical alert dictionary.
+        """
         alert_id = alert_block.get("id")
         pos = alert_block.get("pos")
         if (
@@ -450,6 +511,11 @@ class RangerAgent(Agent):
         self.log("Ordered direct follow on", alert_id, "by", drone_jid)
 
     async def _notify_drone_relief(self, alert_id: Optional[str]) -> None:
+        """Signal a drone to stand down once the ranger resolves a direct alert.
+
+        Args:
+            alert_id (str | None): Tracking identifier for the alert.
+        """
         if not alert_id:
             return
         drone_jid = self._direct_assignments.pop(alert_id, None)
@@ -464,6 +530,14 @@ class RangerAgent(Agent):
         self.log("Notified", drone_jid, "to stand down for", alert_id)
 
     def _nearest_drone_jid(self, target: Tuple[int, int]) -> Optional[str]:
+        """Select the drone positioned closest to the provided coordinates.
+
+        Args:
+            target (Tuple[int, int]): Target grid coordinates.
+
+        Returns:
+            str | None: Drone JID or None when no drones registered.
+        """
         best: Optional[str] = None
         best_dist = float("inf")
         for jid, pos in self._drone_positions.items():
@@ -477,6 +551,7 @@ class RangerAgent(Agent):
         return self.drone_jids[0] if self.drone_jids else None
 
     async def _process_alert_backlog(self) -> None:
+        """Continuously process queued alerts sorted by distance."""
         if self._processing_alerts:
             return
         self._processing_alerts = True
@@ -489,6 +564,7 @@ class RangerAgent(Agent):
             self._processing_alerts = False
 
     def _select_closest_alert_index(self) -> int:
+        """Pick the index of the alert nearest to the current ranger location."""
         if not self._alert_backlog:
             return 0
         best_idx = 0
@@ -509,6 +585,11 @@ class RangerAgent(Agent):
         return best_idx
 
     async def _handle_single_alert(self, record: Dict[str, Any]) -> None:
+        """Resolve a single alert by travelling, logging metrics, and confirming.
+
+        Args:
+            record (Dict[str, Any]): Cached backlog entry.
+        """
         payload = record["payload"]
         behaviour = record["behaviour"]
         category = record["category"]
@@ -577,6 +658,15 @@ class RangerAgent(Agent):
                 await self._notify_drone_relief(alert_id)
 
     def _capture_poacher_near(self, position: Tuple[int, int], radius: int = 1) -> bool:
+        """Attempt to deactivate poachers inside a radius around the ranger.
+
+        Args:
+            position (Tuple[int, int]): Ranger position where the search begins.
+            radius (int, optional): Search radius in Manhattan steps.
+
+        Returns:
+            bool: True when at least one poacher is neutralised.
+        """
         reserve = getattr(self, "reserve", None)
         engine = getattr(reserve, "events", None) if reserve else None
         if engine is None:
@@ -594,6 +684,7 @@ class RangerAgent(Agent):
         return captured
 
     async def _escort_poacher_to_base(self) -> None:
+        """Simulate transporting an apprehended poacher back to base."""
         if self._current_position == self._base_position:
             self.log("Already at base with detainee.")
             return
@@ -608,9 +699,19 @@ class RangerAgent(Agent):
         self._refuel()
 
     def _update_field_position(self, new_position: Tuple[int, int]) -> None:
+        """Persist the ranger's last known position for future planning.
+
+        Args:
+            new_position (Tuple[int, int]): Coordinates reached by the ranger.
+        """
         self._current_position = new_position
 
     async def _travel_path(self, path: List[Tuple[int, int]]) -> None:
+        """Walk a path step-by-step while respecting dispatch and travel delays.
+
+        Args:
+            path (List[Tuple[int, int]]): Ordered list of coordinates to visit.
+        """
         if len(path) <= 1:
             return
         if self.dispatch_delay_s > 0:
@@ -624,11 +725,29 @@ class RangerAgent(Agent):
     def _manhattan_distance(
         self, start: Tuple[int, int], target: Tuple[int, int]
     ) -> int:
+        """Return the Manhattan distance between two cells.
+
+        Args:
+            start (Tuple[int, int]): Origin coordinates.
+            target (Tuple[int, int]): Destination coordinates.
+
+        Returns:
+            int: Number of axis-aligned steps separating the cells.
+        """
         return abs(start[0] - target[0]) + abs(start[1] - target[1])
 
     def _build_manhattan_path(
-        self, start: Tuple[int, int], target: Tuple[int, int]
+         self, start: Tuple[int, int], target: Tuple[int, int]
     ) -> List[Tuple[int, int]]:
+        """Create a straight-line path restricted to horizontal/vertical moves.
+
+        Args:
+            start (Tuple[int, int]): Starting coordinates.
+            target (Tuple[int, int]): Destination coordinates.
+
+        Returns:
+            List[Tuple[int, int]]: Intermediate steps along the path.
+        """
         path = [start]
         cx, cy = start
         tx, ty = target
@@ -649,11 +768,28 @@ class RangerAgent(Agent):
     def _fuel_needed_for_mission(
         self, start: Tuple[int, int], target: Tuple[int, int]
     ) -> float:
+        """Estimate the fuel requirements for a round trip to the alert.
+
+        Args:
+            start (Tuple[int, int]): Origin coordinates.
+            target (Tuple[int, int]): Target coordinates.
+
+        Returns:
+            float: Consumption estimate in fuel units.
+        """
         to_target = self._manhattan_distance(start, target)
         to_base = self._manhattan_distance(target, self._base_position)
         return (to_target + to_base) * self.fuel_per_step
 
     def _ensure_fuel_for_mission(self, target: Tuple[int, int]) -> bool:
+        """Guarantee enough fuel exists to travel to the alert and return.
+
+        Args:
+            target (Tuple[int, int]): Coordinates of the alert.
+
+        Returns:
+            bool: True when a mission can start safely.
+        """
         required = self._fuel_needed_for_mission(self._current_position, target)
 
         if self.fuel_level >= required:
@@ -676,6 +812,11 @@ class RangerAgent(Agent):
         return False
 
     def _consume_fuel(self, steps: int) -> None:
+        """Decrease the fuel level based on traversed steps.
+
+        Args:
+            steps (int): Number of movement steps performed.
+        """
         if steps <= 0:
             return
         consumed = steps * self.fuel_per_step
@@ -683,6 +824,7 @@ class RangerAgent(Agent):
         self.log("Fuel:", f"{self.fuel_level:.1f}/{self.max_fuel:.1f}")
 
     def _check_refuel_need(self) -> None:
+        """Force a return to base when fuel margins shrink below the buffer."""
         if self._current_position == self._base_position:
             return
         dist = self._manhattan_distance(self._current_position, self._base_position)
@@ -692,6 +834,7 @@ class RangerAgent(Agent):
             self._travel_to_base()
 
     def _travel_to_base(self) -> None:
+        """Relocate the ranger to base, consuming fuel along the way."""
         if self._current_position == self._base_position:
             self._refuel()
             return
@@ -703,6 +846,7 @@ class RangerAgent(Agent):
         self._refuel()
 
     def _refuel(self) -> None:
+        """Reset the fuel level to maximum capacity."""
         self.fuel_level = self.max_fuel
         self.log("Ranger refueled.")
 
@@ -711,34 +855,44 @@ class RangerAgent(Agent):
     # ================================
 
     class AlertReceptionBehaviour(CyclicBehaviour):
+        """Background behaviour that waits for incoming anomaly alerts."""
+
         def __init__(self, ranger: "RangerAgent"):
+            """Link the behaviour to its owning ranger agent."""
             super().__init__()
             self.ranger = ranger
 
         async def run(self) -> None:
+            """Pull messages from the queue and hand them to the ranger handler."""
             msg = await self.receive(timeout=0.5)
             if msg:
                 await self.ranger.handle_drone_notification(self, msg)
 
     class TelemetryReceptionBehaviour(CyclicBehaviour):
+        """Continuously ingests telemetry updates sent by drones."""
+
         def __init__(self, ranger: "RangerAgent"):
+            """Persist the ranger reference for later callbacks."""
             super().__init__()
             self.ranger = ranger
 
         async def run(self) -> None:
+            """Receive telemetry and forward it to the ranger processor."""
             msg = await self.receive(timeout=0.5)
             if msg:
                 await self.ranger.handle_drone_telemetry(self, msg)
 
     # NOVO #
     class CNPProposalReceptionBehaviour(CyclicBehaviour):
-        """Recebe PROPOSE dos drones no âmbito do CNP."""
+        """Receive and buffer PROPOSE replies from drones during the CNP."""
 
         def __init__(self, ranger: "RangerAgent"):
+            """Store the owning ranger instance for message handling."""
             super().__init__()
             self.ranger = ranger
 
         async def run(self) -> None:
+            """Deliver CNP proposals to the ranger as they arrive."""
             msg = await self.receive(timeout=0.5)
             if not msg:
                 return

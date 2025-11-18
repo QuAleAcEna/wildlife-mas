@@ -1,3 +1,5 @@
+"""Agent that simulates a collared animal broadcasting telemetry to the ranger."""
+
 # NOVO #
 from __future__ import annotations
 
@@ -23,6 +25,14 @@ class AnimalTrackerAgent(agent.Agent):
     """
 
     def __init__(self, jid: str, password: str, reserve: Reserve, target_jid: str):
+        """Configure the mock animal tracker with destinations and recipients.
+
+        Args:
+            jid (str): SPADE identifier for the tracker agent.
+            password (str): SPADE password for authentication.
+            reserve (Reserve): Map providing bounds and no-fly zones.
+            target_jid (str): Recipient (usually the ranger) for telemetry.
+        """
         super().__init__(jid, password)
         self.reserve = reserve
         self.target_jid = target_jid  # tipicamente o Ranger
@@ -83,6 +93,7 @@ class AnimalTrackerAgent(agent.Agent):
             self.position = trial
 
     def _clamp(self, pos: Coord) -> Coord:
+        """Keep coordinates inside reserve boundaries."""
         x = max(0, min(self.reserve.width - 1, pos[0]))
         y = max(0, min(self.reserve.height - 1, pos[1]))
         return (x, y)
@@ -91,6 +102,7 @@ class AnimalTrackerAgent(agent.Agent):
         """Comportamento periódico: mover o animal e reportar posição."""
 
         async def run(self):
+            """Move the animal, compose telemetry, and send it to the ranger."""
             # Atualiza posição
             self.agent._step_towards_goal()
 
@@ -117,10 +129,12 @@ class AnimalTrackerAgent(agent.Agent):
             )
 
     async def setup(self):
+        """Start the periodic migration behaviour."""
         self.log("Animal tracker starting… at", self.position, "goal", self._goal)
         behaviour = self.MigrateAndReport(period=3.0)  # a cada 3 segundos
         self.add_behaviour(behaviour)
 
     def log(self, *args):
+        """Emit helper logs with a consistent [ANIMAL] prefix."""
         print("[ANIMAL]", *args)
 # NOVO #
