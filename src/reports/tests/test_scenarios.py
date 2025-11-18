@@ -23,6 +23,8 @@ Coord = Tuple[int, int]
 SENSOR_POSITIONS: Tuple[Coord, ...] = ((2, 2), (17, 2), (2, 17), (17, 17))
 SENSOR_RADIUS = 4
 DRONE_SENSOR_RADIUS = 2
+DEFAULT_PLOT_PATH = Path("reports/test_scenarios.png")
+DEFAULT_CSV_PATH = Path("reports/test_scenarios.csv")
 
 
 @dataclass
@@ -303,13 +305,14 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("test_scenarios.csv"),
-        help="Destination CSV path (default: ./test_scenarios.csv).",
+        default=DEFAULT_CSV_PATH,
+        help="Destination CSV path (default: reports/test_scenarios.csv).",
     )
     parser.add_argument(
         "--plot",
         type=Path,
-        help="Optional path to export a bar chart comparing detection and coverage rates.",
+        default=DEFAULT_PLOT_PATH,
+        help="Path to export a bar chart comparing detection and coverage rates (default: reports/test_scenarios.png).",
     )
     args = parser.parse_args()
 
