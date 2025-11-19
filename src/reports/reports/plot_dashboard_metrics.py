@@ -75,7 +75,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("interface/reports/dashboard_metrics.png"),
+        default=Path("reports/dashboard_metrics.png"),
         help="Imagem de saída (default: interface/reports/dashboard_metrics.png).",
     )
     args = parser.parse_args()
