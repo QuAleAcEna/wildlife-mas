@@ -11,8 +11,8 @@ PARA CORRER A INTERFACE!!!!!!
 - A consistência é importante: usa sempre `"""Triple quotes"""`, descreve apenas o comportamento não óbvio e documenta atributos em docstrings de classe.
 - Podes pré-visualizar a documentação gerada automaticamente com [`pdoc`](https://pdoc.dev). Exemplo:
   ```bash
-  cd src
-  pdoc agents ranger_agent.py core messages.py -o ../docs
+  # a partir da raiz do repo
+  PYTHONPATH=src pdoc agents.ranger_agent agents.sensor_agent core.messages -o docs
   ```
-  O comando cria HTML em `docs/` que podes abrir no browser. Ajusta os caminhos conforme precisares (por exemplo `pdoc .` para todo o pacote).
+  O comando cria HTML em `docs/` que podes abrir no browser. Ajusta os módulos conforme precisares (por exemplo `PYTHONPATH=src pdoc agents core -o docs` para todo o pacote).
 - `help(obj)` no REPL ou `python -m pydoc module` continuam a mostrar as mesmas descrições, portanto mantém os docstrings atualizados sempre que alterares o comportamento.
