@@ -27,6 +27,17 @@ DRONE_PASS = os.getenv("DRONE_PASS")
 RANGER_JID = os.getenv("RANGER_JID")
 RANGER_PASS = os.getenv("RANGER_PASS")
 
+# Exporting the helpers makes pdoc render their docstrings even with private names.
+__all__ = [
+    "main",
+    "_run_events",
+    "_with_resource",
+    "_pick_sector_base",
+    "_require_env_vars",
+    "_patch_pyjabber_handle_user",
+    "_patch_pyjabber_xml_protocol",
+]
+
 
 def _with_resource(jid: str, resource: str) -> str:
     """Append/replace the resource part of a JID for multi-session use."""

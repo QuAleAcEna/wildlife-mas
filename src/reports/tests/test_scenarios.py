@@ -26,6 +26,28 @@ DRONE_SENSOR_RADIUS = 2
 DEFAULT_PLOT_PATH = Path("reports/test_scenarios.png")
 DEFAULT_CSV_PATH = Path("reports/test_scenarios.csv")
 
+__all__ = [
+    "Coord",
+    "Scenario",
+    "ThreatRecord",
+    "PatrolDrone",
+    "SENSOR_POSITIONS",
+    "SENSOR_RADIUS",
+    "DRONE_SENSOR_RADIUS",
+    "DEFAULT_PLOT_PATH",
+    "DEFAULT_CSV_PATH",
+    "_build_config",
+    "_manhattan",
+    "_build_patrol_route",
+    "_spawn_drones",
+    "_default_scenarios",
+    "_is_detected",
+    "_run_single_scenario",
+    "_write_csv",
+    "_export_plot",
+    "main",
+]
+
 
 @dataclass
 class Scenario:

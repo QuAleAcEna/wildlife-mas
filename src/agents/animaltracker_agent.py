@@ -14,6 +14,7 @@ from spade.message import Message
 from core.env import Reserve
 from core.messages import INFORM, TELEMETRY, json_dumps
 
+__all__ = ["AnimalTrackerAgent"]
 
 Coord = Tuple[int, int]
 

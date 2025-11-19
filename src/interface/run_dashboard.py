@@ -38,6 +38,12 @@ from run_all import (
     _with_resource,
 )
 
+__all__ = [
+    "main",
+    "_run_events",
+    "_start_static_server",
+]
+
 
 def _start_static_server(directory: Path, preferred_port: int = 8000) -> Tuple[ThreadingHTTPServer, threading.Thread, str]:
     """

@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+__all__ = ["EnvironmentClock", "Reserve"]
+
 
 class EnvironmentClock:
     """Async clock that advances simulated days and hours at a configurable rate."""

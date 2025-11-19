@@ -35,6 +35,8 @@ from core.messages import (
 )
 from core.env import Reserve
 
+__all__ = ["DroneAgent", "_default_sampler"]
+
 _DEFAULT_SAMPLE_SIZE = 512
 
 

@@ -20,6 +20,17 @@ SENSOR_HERD_BASE_DET = 0.7            # base para bandos
 SENSOR_FALLBACK_RANDOM_PROB = 0.03    # prob. de alerta aleatório quando nada é visto
 # NOVO #
 
+__all__ = [
+    "SENSOR_COVERAGE_SIZE",
+    "SENSOR_MIN_DET_PROB",
+    "SENSOR_POACHER_BASE_DET",
+    "SENSOR_HERD_BASE_DET",
+    "SENSOR_FALLBACK_RANDOM_PROB",
+    "plan_sensor_grid",
+    "_distance_factor",
+    "SensorAgent",
+]
+
 
 def plan_sensor_grid(reserve: Reserve, coverage_size: int = SENSOR_COVERAGE_SIZE) -> List[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
     """

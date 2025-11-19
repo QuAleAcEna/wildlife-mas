@@ -28,6 +28,8 @@ from core.messages import (
 # NOVO #
 from core.env import EnvironmentClock
 
+__all__ = ["RangerAgent"]
+
 
 class RangerAgent(Agent):
     """Ranger command agent that receives alerts and issues responses."""

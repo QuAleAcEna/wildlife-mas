@@ -17,6 +17,11 @@ from agents.sensor_agent import SensorAgent
 from core.env import Reserve
 from core.events import Herd, Poacher, WorldEventEngine
 
+__all__ = [
+    "DashboardStateWriter",
+    "_safe_tuple",
+]
+
 Coord = Tuple[int, int]
 
 
