@@ -1,2 +1,3 @@
-"""Utilities for the week 6 dashboard/interface layer."""
+"""Utilities for the dashboard/interface layer."""
+
 
