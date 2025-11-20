@@ -93,9 +93,9 @@ class DashboardStateWriter:
                     self._history.pop(0)
             await asyncio.sleep(self.interval)
 
-    # ------------------------------------------------------------------
+  
     # Snapshot assembly helpers
-    # ------------------------------------------------------------------
+   
     def _current_clock_state(self) -> Tuple[int, int, float]:
         """Determine the current simulated day/hour even if the clock isn't running."""
         clock = getattr(self.events, "clock", None) or getattr(self.reserve, "clock", None)

@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - best effort fallback
     import sys
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from interface.dashboard import DashboardStateWriter  # type: ignore
+    from interface.dashboard import DashboardStateWriter  
 from run_all import (
     DRONE_JID,
     DRONE_PASS,
@@ -78,7 +78,7 @@ def _start_static_server(directory: Path, preferred_port: int = 8000) -> Tuple[T
 
 
 async def _run_events(engine: WorldEventEngine) -> None:
-    """Run the world event engine in the background."""
+    """Run the WorldEventEngine in the background."""
     try:
         while True:
             engine.tick()
@@ -109,7 +109,7 @@ async def main(args: Any = None) -> None:
     ranger = RangerAgent(RANGER_JID, RANGER_PASS, clock=reserve.clock)
     ranger.reserve = reserve
 
-    # --- Drones setup (mirrors run_all.py) ---
+    # Drones setup (mirrors run_all.py) 
     drone_count = 4
     callsigns = ["1", "2", "3", "4"]
     half_w = max(1, reserve.width // 2)
