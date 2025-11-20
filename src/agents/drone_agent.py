@@ -823,7 +823,6 @@ class DroneAgent(Agent):
                 self.position,
                 f"[{self._route_index + 1}/{len(self._patrol_route)}]",
             )
-            await self._maybe_emit_patrol_alert(behaviour)
 
         await self._scan_events_nearby(behaviour)
 
@@ -866,36 +865,6 @@ class DroneAgent(Agent):
         msg.set_metadata("type", TELEMETRY)
         msg.body = json_dumps(payload)
         await behaviour.send(msg)
-
-    async def _maybe_emit_patrol_alert(
-        self, behaviour: "DroneAgent.PatrolBehaviour"
-    ) -> None:
-        """Occasionally raise a synthetic alert while patrolling for extra noise.
-
-        Args:
-            behaviour (PatrolBehaviour): Behaviour used to send alerts.
-        """
-        if self._patrol_rng.random() > 0.1:
-            return
-
-        alert_id = f"{self.jid}-patrol-{secrets.token_hex(4)}"
-        payload = {
-            "sensor": str(self.jid),
-            "id": alert_id,
-            "pos": (self.position[0], self.position[1]),
-            "confidence": round(self._patrol_rng.uniform(0.55, 0.9), 2),
-            "ts": dt.datetime.utcnow().isoformat() + "Z",
-        }
-        package = {
-            "sensor": str(self.jid),
-            "drone": str(self.jid),
-            "alert": payload,
-            "ack": {"alert_id": alert_id, "source": "drone_patrol"},
-        }
-
-        msg = make_inform_alert(self.ranger_jid, package)
-        await behaviour.send(msg)
-        self.log("Self alert:", alert_id, "at", payload["pos"])
 
     async def _scan_events_nearby(self, behaviour: "DroneAgent.PatrolBehaviour") -> None:
         """Look for simulated world entities and send real-time alerts.

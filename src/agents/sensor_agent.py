@@ -1,6 +1,5 @@
 """Passive ground sensor agent that watches the reserve and emits alerts."""
 
-import random
 import time
 import uuid
 from typing import List, Optional, Tuple
@@ -17,7 +16,6 @@ SENSOR_COVERAGE_SIZE = 5              # sensores cobrem blocos 5x5
 SENSOR_MIN_DET_PROB = 0.2             # probabilidade mínima de deteção
 SENSOR_POACHER_BASE_DET = 0.9         # base para caçadores
 SENSOR_HERD_BASE_DET = 0.7            # base para bandos
-SENSOR_FALLBACK_RANDOM_PROB = 0.03    # prob. de alerta aleatório quando nada é visto
 # NOVO #
 
 __all__ = [
@@ -25,7 +23,6 @@ __all__ = [
     "SENSOR_MIN_DET_PROB",
     "SENSOR_POACHER_BASE_DET",
     "SENSOR_HERD_BASE_DET",
-    "SENSOR_FALLBACK_RANDOM_PROB",
     "plan_sensor_grid",
     "_distance_factor",
     "SensorAgent",
@@ -109,8 +106,8 @@ class SensorAgent(agent.Agent):
         x, y = cell
         return x_min <= x <= x_max and y_min <= y <= y_max
 
-    class SenseAndAlert(PeriodicBehaviour):  # sending alerts at random times, change to be based on movement, sound, etc
-        """Periodic behaviour that probabilistically emits anomaly alerts."""
+    class SenseAndAlert(PeriodicBehaviour):
+        """Periodic behaviour that emits anomaly alerts for nearby entities."""
 
         async def run(self):
             """Fire alerts with base on nearby dynamic entities (poachers/herds)."""
