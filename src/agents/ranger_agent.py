@@ -11,7 +11,7 @@ from spade.behaviour import CyclicBehaviour
 from spade.message import Message
 from spade.template import Template
 
-# NOVO #
+
 from core.messages import (
     ALERT_ANOMALY,
     TELEMETRY,
@@ -25,7 +25,7 @@ from core.messages import (
     json_dumps,
     json_loads,
 )
-# NOVO #
+
 from core.env import EnvironmentClock
 
 __all__ = ["RangerAgent"]
@@ -62,7 +62,7 @@ class RangerAgent(Agent):
         self._fuel_return_margin_steps: int = 5
         self.travel_time_per_step_s: float = 1.0
 
-        # NOVO #
+        
         # Métricas simples de categoria de alertas e despachos
         self.alert_counts = {"poacher": 0, "herd": 0, "unknown": 0}
         self.dispatch_counts = {"poacher": 0, "herd": 0, "unknown": 0}
@@ -72,7 +72,7 @@ class RangerAgent(Agent):
 
         # Estado do CNP: alert_id -> {incident, proposals, expected}
         self._cnp_pending: Dict[str, Dict[str, Any]] = {}
-        # NOVO #
+        
 
         # Ligação opcional a um writer externo (dashboard Week 6)
         self.metrics_writer: Optional[Any] = None
@@ -100,14 +100,14 @@ class RangerAgent(Agent):
         telemetry_template.set_metadata("type", TELEMETRY)
         self.add_behaviour(telemetry_behaviour, telemetry_template)
 
-        # NOVO #
+        
         # CNP: Propostas dos drones
         cnp_behaviour = self.CNPProposalReceptionBehaviour(self)
         cnp_template = Template()
         cnp_template.set_metadata("performative", PROPOSE)
         cnp_template.set_metadata("type", CNP_ALERT)
         self.add_behaviour(cnp_behaviour, cnp_template)
-        # NOVO #
+        
 
     # ================================
     #   ALERT HANDLING + START CNP
@@ -130,7 +130,7 @@ class RangerAgent(Agent):
 
         self.alert_history.append(payload)
 
-        # NOVO #
+        
         # Extrair info do alerta e categoria
         alert_block = payload.get("alert", {}) if isinstance(payload.get("alert"), dict) else {}
         category = alert_block.get("category") or payload.get("category") or "unknown"
@@ -138,9 +138,9 @@ class RangerAgent(Agent):
             category = "unknown"
         self.alert_counts[category] += 1
         alert_id = alert_block.get("id")
-        # NOVO #
+        
 
-        # NOVO #
+        
         # Iniciar CNP apenas para POACHER
         confidence = alert_block.get("confidence") or payload.get("confidence")
         high_conf_poacher = (
@@ -153,7 +153,7 @@ class RangerAgent(Agent):
             await self._start_cnp_for_alert(alert_block, category, behaviour)
         elif high_conf_poacher:
             await self._order_drone_follow(alert_block)
-        # NOVO #
+        
 
         # Política de horário (poacher ignora janelas)
         if not self._can_dispatch_now(category) and not high_conf_poacher:
@@ -185,7 +185,7 @@ class RangerAgent(Agent):
     #   CNP MANAGEMENT
     # ================================
 
-    # NOVO #
+    
     async def _start_cnp_for_alert(
         self,
         alert_block: Dict[str, Any],
@@ -326,7 +326,7 @@ class RangerAgent(Agent):
                     {"alert_id": alert_id, "reason": "winner_better"}
                 )
             await behaviour.send(msg)
-    # NOVO #
+    
 
     # ================================
     #   TELEMETRY + UTILITIES

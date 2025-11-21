@@ -1027,7 +1027,7 @@ class DroneAgent(Agent):
     #   CNP BEHAVIOURS
     # ---------------------------------------------------------------
 
-    # NOVO #
+    
     class CNPParticipationBehaviour(CyclicBehaviour):
         """Handle CNP CFP invitations by replying with a PROPOSE message."""
 
@@ -1117,7 +1117,7 @@ class DroneAgent(Agent):
 
             elif perf == REJECT:
                 self.drone.log("REJECT:", payload)
-    # NOVO #
+    
 
     class DirectAssignmentBehaviour(CyclicBehaviour):
         """Handle direct follow/stand-down commands sent by the ranger."""

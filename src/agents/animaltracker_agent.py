@@ -1,6 +1,6 @@
 """Agent that simulates a collared animal broadcasting telemetry to the ranger."""
 
-# NOVO #
+
 from __future__ import annotations
 
 import datetime as dt
@@ -138,4 +138,4 @@ class AnimalTrackerAgent(agent.Agent):
     def log(self, *args):
         """Emit helper logs with a consistent [ANIMAL] prefix."""
         print("[ANIMAL]", *args)
-# NOVO #
+

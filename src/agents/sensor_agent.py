@@ -10,13 +10,13 @@ from spade.behaviour import PeriodicBehaviour
 from core.env import Reserve
 from core.messages import make_inform_alert
 
-# NOVO #
+
 # Parâmetros simples de deteção dos sensores
 SENSOR_COVERAGE_SIZE = 5              # sensores cobrem blocos 5x5
 SENSOR_MIN_DET_PROB = 0.2             # probabilidade mínima de deteção
 SENSOR_POACHER_BASE_DET = 0.9         # base para caçadores
 SENSOR_HERD_BASE_DET = 0.7            # base para bandos
-# NOVO #
+
 
 __all__ = [
     "SENSOR_COVERAGE_SIZE",
@@ -76,12 +76,12 @@ class SensorAgent(agent.Agent):
         self.reserve = reserve
         self.target_drone = target_drone
         self.target_ranger = target_ranger
-        # NOVO #
+        
         # Cada sensor fica fixo numa célula do mapa (simula um sensor físico no terreno).
         self.position = position or self.reserve.random_cell()
         self.coverage_bounds = coverage_bounds
         self.detection_radius = self._compute_detection_radius()
-        # NOVO #
+        
 
     def _compute_detection_radius(self) -> int:
         """Derive a Chebyshev-like coverage radius from bounds or defaults."""
@@ -111,7 +111,7 @@ class SensorAgent(agent.Agent):
 
         async def run(self):
             """Fire alerts with base on nearby dynamic entities (poachers/herds)."""
-            # NOVO #
+            
             engine = getattr(self.agent.reserve, "events", None)
 
             # Primeiro tenta detetar entidades reais (poachers / herds)
